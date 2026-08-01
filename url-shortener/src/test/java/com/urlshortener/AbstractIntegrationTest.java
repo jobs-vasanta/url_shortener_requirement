@@ -1,5 +1,6 @@
 package com.urlshortener;
 
+import org.junit.jupiter.api.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
@@ -26,7 +27,12 @@ import org.testcontainers.utility.DockerImageName;
  * <p>Test classes that don't declare their own {@code @DynamicPropertySource} share one Spring
  * context (and therefore start-up cost) with every other such class; {@code RateLimitIntegrationTest}
  * deliberately declares an extra one to force a separate, isolated context with a tighter limit.
+ *
+ * <p>Tagged "integration" (inherited by every subclass - JUnit 5 collects class-level tags up the
+ * hierarchy) so Gradle's {@code integrationTest} task can select these and the plain {@code test}
+ * task can exclude them; see build.gradle.
  */
+@Tag("integration")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 public abstract class AbstractIntegrationTest {
 

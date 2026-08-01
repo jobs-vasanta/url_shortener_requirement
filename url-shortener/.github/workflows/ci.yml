@@ -1,0 +1,198 @@
+name: CI
+
+# Runs on every push/PR against main, plus manual runs from the Actions tab.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel a still-running run for the same branch/PR when new commits arrive, so we don't burn
+# CI minutes validating commits that are already superseded.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Kept in one place so every job provisions the exact same Gradle version. There is no
+  # committed Gradle wrapper in this repo, so `gradle/actions/setup-gradle` downloads and
+  # installs this version directly (see its `gradle-version` input below) instead of the usual
+  # `./gradlew` invocation.
+  GRADLE_VERSION: "8.14"
+  JAVA_VERSION: "21"
+
+jobs:
+  # ---------------------------------------------------------------------------------------------
+  # 1. BUILD - fail fast on compile errors before spending time on slower Docker-backed
+  #    integration tests. Produces the Spring Boot jar as a shared artifact.
+  # ---------------------------------------------------------------------------------------------
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Gradle ${{ env.GRADLE_VERSION }}
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
+          # Caches ~/.gradle (dependencies + the downloaded Gradle distribution itself) between
+          # runs, so this doesn't re-download the internet on every commit.
+          cache-read-only: false
+
+      - name: Compile and assemble (tests run in their own jobs)
+        run: gradle assemble --no-daemon
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-jar
+          path: build/libs/*.jar
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------------------------
+  # 2. LINT - Spotless checks formatting/import hygiene. Doesn't need compiled classes, so it
+  #    only needs `build` to have proven the code compiles at all.
+  # ---------------------------------------------------------------------------------------------
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Gradle ${{ env.GRADLE_VERSION }}
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
+
+      - name: Run Spotless (format/import/whitespace check)
+        run: gradle spotlessCheck --no-daemon
+
+  # ---------------------------------------------------------------------------------------------
+  # 3. UNIT TESTS - fast, no external services. Excludes anything tagged "integration" (see
+  #    build.gradle's `test` task configuration and AbstractIntegrationTest's @Tag).
+  # ---------------------------------------------------------------------------------------------
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Gradle ${{ env.GRADLE_VERSION }}
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
+
+      - name: Run unit tests
+        run: gradle test --no-daemon
+
+      # Always upload, even on failure, so a red build still leaves the JUnit XML/HTML behind
+      # for diagnosis instead of only a pass/fail flag.
+      - name: Upload unit test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-reports
+          path: |
+            build/test-results/test/**
+            build/reports/tests/test/**
+          if-no-files-found: warn
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------------------------
+  # 4. INTEGRATION TESTS - runs the Testcontainers-backed suite tagged "integration" (real
+  #    Postgres + Redis containers). ubuntu-latest runners ship with a running Docker daemon
+  #    already, so Testcontainers works with no extra service configuration in this workflow.
+  # ---------------------------------------------------------------------------------------------
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Gradle ${{ env.GRADLE_VERSION }}
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
+
+      - name: Run integration tests
+        run: gradle integrationTest --no-daemon
+
+      - name: Upload integration test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-reports
+          path: |
+            build/test-results/integrationTest/**
+            build/reports/tests/integrationTest/**
+          if-no-files-found: warn
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------------------------
+  # 5. UPLOAD REPORTS - runs last regardless of whether earlier jobs passed (`if: always()`),
+  #    consolidates the unit + integration report artifacts into one downloadable bundle, and
+  #    publishes a human-readable pass/fail summary as a PR check from the JUnit XML.
+  # ---------------------------------------------------------------------------------------------
+  publish-reports:
+    name: Upload Reports
+    runs-on: ubuntu-latest
+    needs: [lint, unit-tests, integration-tests]
+    if: always()
+    steps:
+      - name: Download all test report artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "*-test-reports"
+          path: reports
+          merge-multiple: true
+
+      - name: Publish test summary check
+        if: always()
+        uses: dorny/test-reporter@v1
+        with:
+          name: JUnit Test Results
+          path: "reports/**/*.xml"
+          reporter: java-junit
+          fail-on-error: false
+
+      - name: Upload consolidated report bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-reports
+          path: reports/**
+          if-no-files-found: warn
+          retention-days: 30

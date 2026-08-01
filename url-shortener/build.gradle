@@ -2,6 +2,7 @@ plugins {
 	id 'java'
 	id 'org.springframework.boot' version '3.3.4'
 	id 'io.spring.dependency-management' version '1.1.6'
+	id 'com.diffplug.spotless' version '6.25.0'
 }
 
 group = 'com.urlshortener'
@@ -75,5 +76,40 @@ dependencies {
 }
 
 tasks.named('test') {
-	useJUnitPlatform()
+	useJUnitPlatform {
+		// Testcontainers-backed tests are tagged "integration" (see AbstractIntegrationTest) so the
+		// default `test` task - and everything that depends on it, like `check` - stays fast and
+		// Docker-free; they run separately via the `integrationTest` task below.
+		excludeTags 'integration'
+	}
+}
+
+/**
+ * Runs only the tests tagged "integration" (real Postgres/Redis via Testcontainers, so this
+ * requires a working Docker daemon). Deliberately NOT wired into `check`/`build` so a plain
+ * `gradle build` stays fast and doesn't require Docker; CI invokes this task explicitly as its
+ * own pipeline stage instead.
+ */
+tasks.register('integrationTest', Test) {
+	description = 'Runs Testcontainers-backed integration tests.'
+	group = 'verification'
+	testClassesDirs = sourceSets.test.output.classesDirs
+	classpath = sourceSets.test.runtimeClasspath
+	useJUnitPlatform {
+		includeTags 'integration'
+	}
+	shouldRunAfter test
+}
+
+spotless {
+	java {
+		target 'src/**/*.java'
+		// Matches this codebase's existing tab-indentation convention rather than imposing an
+		// opinionated reformatter (e.g. google-java-format), which defaults to spaces and would
+		// rewrite every existing file.
+		indentWithTabs()
+		removeUnusedImports()
+		trimTrailingWhitespace()
+		endWithNewline()
+	}
 }
