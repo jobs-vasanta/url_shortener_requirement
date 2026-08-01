@@ -23,24 +23,24 @@ com.urlshortener
 ├── UrlShortenerApplication.java
 ├── config       # RedisConfig, SecurityConfig, AsyncConfig, OpenApiConfig, SnowflakeConfig, WebMvcConfig
 ├── controller   # LinkController (/urls), RedirectController (/{shortCode}), AnalyticsController (/analytics/{shortCode})
-├── service      # UrlService, ShortCodeGeneratorService, UrlValidationService, AnalyticsService (+ impl/)
-├── domain       # Link, LinkStatus, ClickEvent (JPA entities)
-├── repository   # LinkRepository, ClickEventRepository (Spring Data JPA)
-├── dto          # CreateLinkRequest, UpdateLinkRequest, LinkResponse, AnalyticsResponse, ErrorResponse
+├── service      # UrlService, ShortCodeGeneratorService, UrlValidationService, AnalyticsService, ApiKeyService (+ impl/)
+├── domain       # Link, LinkStatus, ClickEvent, ApiKey, ApiKeyTier (JPA entities/enums)
+├── repository   # LinkRepository, ClickEventRepository, ApiKeyRepository (Spring Data JPA)
+├── dto          # CreateLinkRequest, UpdateLinkRequest, LinkResponse, AnalyticsResponse, ErrorResponse, RequestLimits
 ├── cache        # CacheService (circuit-breaker-wrapped Redis get/put/evict), CacheKeys
-├── ratelimit    # RateLimitInterceptor (Redis fixed-window counter), RateLimitProperties
+├── ratelimit    # RateLimitInterceptor (Redis fixed-window counter, tier-aware), RateLimitProperties
 ├── logging      # CorrelationIdFilter, RequestLoggingFilter, MdcTaskDecorator, PerformanceLoggingAspect
 ├── event        # ClickRecordedEvent + async listener (decouples redirect latency from analytics writes)
 ├── exception    # Domain exceptions + GlobalExceptionHandler (-> ErrorResponse)
-└── util         # Base62Encoder, SnowflakeIdGenerator
+└── util         # Base62Encoder, SnowflakeIdGenerator, HashUtil
 ```
 
 **Request flow:**
 
-1. `POST /urls` validates the target URL (`UrlValidationService` - scheme allow-list, length limits, CRLF/control-char rejection to block header/open-redirect injection), generates a short code via `ShortCodeGeneratorService` (Base62-encoded Snowflake ID - unique by construction, no collision retry needed) or uses a caller-supplied alias, and persists a `Link` row.
+1. `POST /urls` resolves the caller's plan tier from an optional `X-Api-Key` header (`ApiKeyService` - hashes the raw key and looks it up, defaulting to `FREE` if absent/unrecognized), validates the target URL (`UrlValidationService` - scheme allow-list, length limits, CRLF/control-char rejection to block header/open-redirect injection), generates a short code via `ShortCodeGeneratorService` (Base62-encoded Snowflake ID - unique by construction, no collision retry needed) or uses a caller-supplied alias, computes a tier-dependent expiry (free: capped at/defaults to 30 days; premium: optional, can be "never"), and persists a `Link` row.
 2. `GET /{shortCode}` (`RedirectController`) is the hot path: `UrlService.resolveForRedirect` reads through `CacheService` (Redis cache-aside, resilience4j circuit breaker with a DB fallback if Redis is unavailable), returns a `302` immediately, and publishes a `ClickRecordedEvent` that an `@Async` listener persists off the request thread - so a slow/contended analytics write never adds latency to the redirect itself.
 3. `GET /analytics/{shortCode}` reads an aggregated click count/timestamps, cached briefly (30s default) since it's a rollup, not the click log itself.
-4. Every request passes through `CorrelationIdFilter` (propagates/generates `X-Correlation-Id`, into MDC and the response) and `RequestLoggingFilter` (one structured access-log line per request); `RateLimitInterceptor` enforces a per-IP fixed-window limit ahead of the controllers (excluding `/actuator/**`, `/swagger-ui/**`, `/v3/api-docs/**`).
+4. Every request passes through `CorrelationIdFilter` (propagates/generates `X-Correlation-Id`, into MDC and the response) and `RequestLoggingFilter` (one structured access-log line per request); `RateLimitInterceptor` enforces a fixed-window limit ahead of the controllers (excluding `/actuator/**`, `/swagger-ui/**`, `/v3/api-docs/**`) - a higher allowance for resolved premium callers, partitioned by API-key hash rather than IP once a key is presented.
 
 ## Setup
 
@@ -97,16 +97,22 @@ Full interactive docs are served at `/swagger-ui.html` (springdoc-openapi); summ
 
 | Method | Path | Purpose | Success | Failure modes |
 |---|---|---|---|---|
-| `POST` | `/urls` | Create a short link | `201` `LinkResponse` | `400` invalid URL/body, `409` alias in use, `429` rate limited |
+| `POST` | `/urls` | Create a short link | `201` `LinkResponse` | `400` invalid URL/body/plan-limit exceeded, `409` alias in use, `429` rate limited |
 | `GET` | `/urls/{shortCode}` | Get link metadata | `200` `LinkResponse` | `404` not found |
-| `PATCH` | `/urls/{shortCode}` | Update `active` and/or `ttlSeconds` (omitted fields unchanged) | `200` `LinkResponse` | `400` invalid body, `404` not found |
+| `PATCH` | `/urls/{shortCode}` | Update `active` and/or `ttlSeconds` (omitted fields unchanged) | `200` `LinkResponse` | `400` invalid body/plan-limit exceeded, `404` not found |
 | `DELETE` | `/urls/{shortCode}` | Deactivate (idempotent) | `204` | `404` not found |
 | `GET` | `/{shortCode}` | Public redirect (root path, separate from `/urls` on purpose) | `302` with `Location` header | `404` not found, `410` expired/deactivated |
 | `GET` | `/analytics/{shortCode}` | Click analytics | `200` `AnalyticsResponse` | `404` not found |
 
-**`CreateLinkRequest`**: `longUrl` (required, ≤2048 chars), `alias` (optional, `^[A-Za-z0-9_-]{3,32}$`), `ttlSeconds` (optional, positive, ≤365 days).
+**Plan tiers (Premium Users)**: `POST`/`PATCH /urls` accept an optional `X-Api-Key` header, resolved (by its SHA-256 hash - the raw key is never stored) to a `FREE` or `PREMIUM` tier; a missing, unrecognized, or deactivated key silently falls back to `FREE`, so the header is purely additive. The tier gates two things:
+- **Link expiry**: free-tier links always expire, defaulting to and capped at 30 days - an explicit `ttlSeconds` beyond that is rejected with `400 TTL_EXCEEDS_PLAN_LIMIT`, even though the DTO's own validation allows a much larger value (that ceiling is sized for premium). Premium callers may omit `ttlSeconds` entirely for a link that never expires, or set an explicit value up to that larger ceiling.
+- **Rate limit**: premium callers get a higher per-window request allowance (`app.rate-limit.premium-limit-for-period`, default 200, vs. `limit-for-period`, default 20) and are tracked by their key's hash rather than by IP, so unrelated clients sharing an egress IP (e.g. behind a corporate NAT) don't share one another's quota.
 
-**`UpdateLinkRequest`**: `ttlSeconds` (optional) and/or `active` (optional) - at least one must be present; `ttlSeconds: 0` expires immediately.
+There is currently no endpoint to issue API keys - rows are inserted directly into the `api_keys` table (see `V3__create_api_keys_table.sql`); key issuance/management is out of scope for now.
+
+**`CreateLinkRequest`**: `longUrl` (required, ≤2048 chars), `alias` (optional, `^[A-Za-z0-9_-]{3,32}$`), `ttlSeconds` (optional, positive; capped at 30 days for free tier, ~10 years for premium - see above).
+
+**`UpdateLinkRequest`**: `ttlSeconds` (optional) and/or `active` (optional) - at least one must be present; `ttlSeconds: 0` expires immediately; same tier-dependent cap as create.
 
 **`LinkResponse`**: `shortCode`, `shortUrl`, `originalUrl`, `status`, `createdAt`, `expiresAt`.
 
@@ -116,8 +122,8 @@ Full interactive docs are served at `/swagger-ui.html` (springdoc-openapi); summ
 
 ## Testing
 
-- **Unit tests** (`src/test/java`, mirroring the main package layout, `*Test.java` suffix): JUnit 5 + Mockito + AssertJ, covering `UrlServiceImpl`, `ShortCodeGeneratorServiceImpl`, `UrlValidationServiceImpl`, `AnalyticsServiceImpl`, `RateLimitInterceptor`, `GlobalExceptionHandler`, `CorrelationIdFilter`, `MdcTaskDecorator`, and the `Link` domain entity - happy path, negative path, exceptions, and edge cases.
-- **Integration tests** (`src/test/java/com/urlshortener/*IntegrationTest.java`, flat under the root package): real Postgres + Redis via Testcontainers (`AbstractIntegrationTest` base class), full HTTP stack via `TestRestTemplate` against a random port. Covers link lifecycle, the redirect-and-click-recording flow, Redis cache behavior, rate limiting, and failure scenarios (e.g. Redis down -> circuit breaker falls back to the DB).
+- **Unit tests** (`src/test/java`, mirroring the main package layout, `*Test.java` suffix): JUnit 5 + Mockito + AssertJ, covering `UrlServiceImpl`, `ShortCodeGeneratorServiceImpl`, `UrlValidationServiceImpl`, `AnalyticsServiceImpl`, `ApiKeyServiceImpl`, `RateLimitInterceptor`, `GlobalExceptionHandler`, `CorrelationIdFilter`, `MdcTaskDecorator`, and the `Link` domain entity - happy path, negative path, exceptions, and edge cases.
+- **Integration tests** (`src/test/java/com/urlshortener/*IntegrationTest.java`, flat under the root package): real Postgres + Redis via Testcontainers (`AbstractIntegrationTest` base class), full HTTP stack via `TestRestTemplate` against a random port. Covers link lifecycle, the redirect-and-click-recording flow, Redis cache behavior, rate limiting, failure scenarios (e.g. Redis down -> circuit breaker falls back to the DB), and premium-tier plan behavior (`PremiumTierIntegrationTest`).
 - Run them separately (see [.github/workflows/ci.yml](.github/workflows/ci.yml)):
 
   ```powershell
@@ -138,6 +144,7 @@ Full interactive docs are served at `/swagger-ui.html` (springdoc-openapi); summ
 - Move click recording off the in-JVM `@Async` executor onto a durable queue (Kafka/SQS) so click events survive an app crash between the redirect and the async write, and so analytics can scale independently of the redirect service.
 - API versioning (e.g. `/v1/...`) before any breaking change to the current endpoint shapes.
 - Distributed rate limiting refinements (sliding window instead of fixed window, to avoid burst-at-boundary allowance).
+- An admin endpoint (or CLI) to issue/rotate/revoke API keys - today `api_keys` rows can only be inserted directly against the database.
 
 ## Tradeoffs
 
@@ -145,7 +152,7 @@ Full interactive docs are served at `/swagger-ui.html` (springdoc-openapi); summ
 - **Cache-aside Redis with a circuit breaker, not a required dependency**: `resilience4j` wraps every cache call so a Redis outage degrades to hitting PostgreSQL directly (slower, but still correct) instead of failing every request - traded raw latency-under-failure for availability.
 - **Async click recording via Spring `@Async` + an in-process listener, not a message queue**: much simpler to build/operate for this scope, but click events for the last request(s) before a crash can be lost, and analytics throughput is bounded by this one JVM (see Future Enhancements).
 - **Fixed-window rate limiting (Redis `INCR`+`EXPIRE`) over a sliding-window/token-bucket algorithm**: simpler and cheaper (one round trip per request), at the cost of allowing up to 2x the configured limit across a window boundary.
-- **No authentication**: every management endpoint (`/urls/**`) is open - kept out of scope to focus on the shortening/redirect/analytics core; see Future Enhancements.
+- **No authentication**: every management endpoint (`/urls/**`) is open - kept out of scope to focus on the shortening/redirect/analytics core; see Future Enhancements. `X-Api-Key` is a plan-tier *hint*, not authentication - it grants higher limits/longer expiry to whoever holds a valid key, but doesn't gate access to any endpoint or tie a link to its creator.
 - **Gradle without a committed wrapper**: keeps the repo smaller and avoids a binary `gradle-wrapper.jar`, at the cost of requiring a matching local Gradle install (or Docker) to build - the Dockerfile and CI workflow both pin an explicit Gradle version (`8.14`) to keep builds reproducible despite this.
 
 ## Assumptions
@@ -156,8 +163,9 @@ Full interactive docs are served at `/swagger-ui.html` (springdoc-openapi); summ
 - A short/bounded 30-second staleness window on `GET /analytics/{shortCode}` is acceptable, in exchange for not recomputing the aggregate on every read.
 - Target URLs are assumed to be provided in good faith by the same trust boundary as the API caller; validation defends against obviously malformed/dangerous input (bad scheme, CRLF injection, excessive length) but does not attempt full malware/phishing URL reputation checking.
 - Deployment target is a container-friendly environment (Docker/Kubernetes-style) where `SPRING_PROFILES_ACTIVE=prod`, JSON logging, and externalized config via environment variables are the expected production posture (see `application-prod.yml`).
+- Premium tier is a property of the *API key presented on a given request*, not of the link or a signed-up account - the same caller could mix free- and premium-tier requests depending on which key (if any) they send; billing/subscription management is out of scope for this pass.
 
 
 ## Configuration
 
-All external config is environment-variable driven (see `application.yml`): `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `REDIS_HOST`, `REDIS_PORT`, `RATE_LIMIT_COUNT`, `RATE_LIMIT_PERIOD_SECONDS`, `APP_BASE_URL`. Profiles: `dev` (default, verbose logging) and `prod` (quiet logging, locked-down actuator details).
+All external config is environment-variable driven (see `application.yml`): `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `REDIS_HOST`, `REDIS_PORT`, `RATE_LIMIT_COUNT`, `RATE_LIMIT_PREMIUM_COUNT`, `RATE_LIMIT_PERIOD_SECONDS`, `APP_BASE_URL`. Profiles: `dev` (default, verbose logging) and `prod` (quiet logging, locked-down actuator details).
