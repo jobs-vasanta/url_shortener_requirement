@@ -4,6 +4,7 @@ import com.urlshortener.dto.ErrorResponse;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
@@ -48,6 +49,17 @@ public class GlobalExceptionHandler {
 	public ResponseEntity<ErrorResponse> handleRateLimit(RateLimitExceededException ex) {
 		return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
 				.body(ErrorResponse.of(429, "TOO_MANY_REQUESTS", ex.getMessage()));
+	}
+
+	/**
+	 * Defensive backstop for the DB's unique constraint on short_code: should only ever fire if a
+	 * Snowflake node ID is misconfigured (see SnowflakeConfig) or a custom alias races another request.
+	 */
+	@ExceptionHandler(DataIntegrityViolationException.class)
+	public ResponseEntity<ErrorResponse> handleDataIntegrityViolation(DataIntegrityViolationException ex) {
+		log.warn("Data integrity violation, likely a short_code uniqueness conflict", ex);
+		return ResponseEntity.status(HttpStatus.CONFLICT)
+				.body(ErrorResponse.of(409, "CONFLICT", "The request could not be completed due to a conflict; please retry"));
 	}
 
 	@ExceptionHandler(MethodArgumentNotValidException.class)

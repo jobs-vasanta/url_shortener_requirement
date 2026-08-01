@@ -213,7 +213,7 @@ sequenceDiagram
 | **Stateless app tier** | Spring Boot instances hold no session state; horizontal scaling behind the load balancer is trivial. |
 | **Redirect hot path** | Redis cache-aside absorbs the vast majority of redirect reads, keeping PostgreSQL load low even under high read/write skew. |
 | **DB connection pressure** | HikariCP pool sized per instance; PgBouncer (or equivalent) in front of PostgreSQL if instance count grows. |
-| **Short code generation contention** | Prefer DB-sequence + Base62 encoding (monotonic, no cross-instance coordination needed) over pure random-with-retry at high write volume; unique constraint remains the correctness backstop either way. |
+| **Short code generation contention** | Implemented as Base62-encoded Snowflake IDs (timestamp + node ID + sequence): generated locally per instance with zero DB round trips and no cross-instance coordination; unique constraint on `short_code` remains a defensive backstop only. |
 | **Analytics write volume** | Async isolation today; `click_events` table time-partitioned (e.g., monthly) to keep indexes small and enable cheap retention/archival (drop old partitions instead of deleting rows). |
 | **Analytics read scale** | Route aggregate queries to a PostgreSQL read replica; short-TTL Redis cache absorbs repeated polling of the same code. |
 | **Read/write separation** | Primary handles link creation + redirect lookups (cache absorbs most); replica handles analytics reporting queries, isolating reporting load from the critical path. |

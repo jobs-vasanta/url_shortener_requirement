@@ -4,38 +4,31 @@ import com.urlshortener.exception.AliasAlreadyExistsException;
 import com.urlshortener.repository.LinkRepository;
 import com.urlshortener.service.ShortCodeGeneratorService;
 import com.urlshortener.util.Base62Encoder;
-import java.util.concurrent.ThreadLocalRandom;
+import com.urlshortener.util.SnowflakeIdGenerator;
 import org.springframework.stereotype.Service;
 
 /**
- * Generates short codes via random-with-retry, falling back to the DB's unique
- * constraint on short_code as the ultimate correctness backstop (RequirementAnalysis.md
- * risk R1). At higher write volume, prefer a DB sequence + Base62Encoder instead
- * (see Architecture.md, Section 6) to avoid retry contention.
+ * Generates short codes by Base62-encoding a Snowflake ID: unique by construction
+ * (timestamp + node ID + sequence), so no existence-check/retry round trip is needed
+ * before insert - unlike pure-random generation. The DB unique constraint on
+ * short_code remains a defensive backstop (see GlobalExceptionHandler) for the
+ * near-impossible case of a node-ID misconfiguration. See chat history for the
+ * full UUID/Base62/Hashing/Snowflake comparison and rationale.
  */
 @Service
 public class ShortCodeGeneratorServiceImpl implements ShortCodeGeneratorService {
 
-	private static final int CODE_LENGTH_CHARS = 7;
-	private static final int MAX_ATTEMPTS = 5;
-	// ~62^7 keyspace; random long bounded to keep Base62Encoder output around CODE_LENGTH_CHARS.
-	private static final long RANDOM_UPPER_BOUND = (long) Math.pow(62, CODE_LENGTH_CHARS);
-
+	private final SnowflakeIdGenerator snowflakeIdGenerator;
 	private final LinkRepository linkRepository;
 
-	public ShortCodeGeneratorServiceImpl(LinkRepository linkRepository) {
+	public ShortCodeGeneratorServiceImpl(SnowflakeIdGenerator snowflakeIdGenerator, LinkRepository linkRepository) {
+		this.snowflakeIdGenerator = snowflakeIdGenerator;
 		this.linkRepository = linkRepository;
 	}
 
 	@Override
 	public String generate() {
-		for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-			String candidate = Base62Encoder.encode(ThreadLocalRandom.current().nextLong(RANDOM_UPPER_BOUND));
-			if (!linkRepository.existsByShortCode(candidate)) {
-				return candidate;
-			}
-		}
-		throw new IllegalStateException("Unable to generate a unique short code after " + MAX_ATTEMPTS + " attempts");
+		return Base62Encoder.encode(snowflakeIdGenerator.nextId());
 	}
 
 	@Override
