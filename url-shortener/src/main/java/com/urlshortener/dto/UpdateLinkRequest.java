@@ -1,5 +1,7 @@
 package com.urlshortener.dto;
 
+import jakarta.validation.constraints.AssertTrue;
+import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Positive;
 
 /**
@@ -10,8 +12,14 @@ import jakarta.validation.constraints.Positive;
 public record UpdateLinkRequest(
 
 		@Positive(message = "ttlSeconds must be positive")
+		@Max(value = RequestLimits.MAX_TTL_SECONDS, message = "ttlSeconds must be at most " + RequestLimits.MAX_TTL_SECONDS + " (365 days)")
 		Long ttlSeconds,
 
 		Boolean active
 ) {
+
+	@AssertTrue(message = "At least one of ttlSeconds or active must be provided")
+	boolean isAtLeastOneFieldPresent() {
+		return ttlSeconds != null || active != null;
+	}
 }

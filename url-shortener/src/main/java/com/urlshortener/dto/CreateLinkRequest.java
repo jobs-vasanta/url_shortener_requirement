@@ -1,12 +1,13 @@
 package com.urlshortener.dto;
 
+import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 
 /**
- * Request body for {@code POST /api/v1/links}.
+ * Request body for {@code POST /urls}.
  * {@code alias} and {@code ttlSeconds} are optional; omit for default behavior
  * (auto-generated code, no expiration).
  */
@@ -20,6 +21,7 @@ public record CreateLinkRequest(
 		String alias,
 
 		@Positive(message = "ttlSeconds must be positive")
+		@Max(value = RequestLimits.MAX_TTL_SECONDS, message = "ttlSeconds must be at most " + RequestLimits.MAX_TTL_SECONDS + " (365 days)")
 		Long ttlSeconds
 ) {
 }

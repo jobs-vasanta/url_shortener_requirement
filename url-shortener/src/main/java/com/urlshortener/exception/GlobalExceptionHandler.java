@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -45,6 +46,12 @@ public class GlobalExceptionHandler {
 				.body(ErrorResponse.of(409, "CONFLICT", ex.getMessage()));
 	}
 
+	@ExceptionHandler(ReservedAliasException.class)
+	public ResponseEntity<ErrorResponse> handleReservedAlias(ReservedAliasException ex) {
+		return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+				.body(ErrorResponse.of(400, "BAD_REQUEST", ex.getMessage()));
+	}
+
 	@ExceptionHandler(RateLimitExceededException.class)
 	public ResponseEntity<ErrorResponse> handleRateLimit(RateLimitExceededException ex) {
 		return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
@@ -69,6 +76,13 @@ public class GlobalExceptionHandler {
 				.toList();
 		return ResponseEntity.status(HttpStatus.BAD_REQUEST)
 				.body(ErrorResponse.of(400, "VALIDATION_FAILED", "Request validation failed", details));
+	}
+
+	/** Covers a missing/empty/syntactically-invalid JSON body (e.g. wrong types, trailing commas, no body at all). */
+	@ExceptionHandler(HttpMessageNotReadableException.class)
+	public ResponseEntity<ErrorResponse> handleMalformedBody(HttpMessageNotReadableException ex) {
+		return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+				.body(ErrorResponse.of(400, "MALFORMED_REQUEST", "Request body is missing or not valid JSON"));
 	}
 
 	@ExceptionHandler(Exception.class)
