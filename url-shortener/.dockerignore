@@ -1,0 +1,17 @@
+# Keeps the build context small and avoids invalidating Docker's layer cache with
+# files that have nothing to do with the actual build (or leaking local secrets/state
+# such as .env or .gradle's local caches into the image build context).
+.git
+.gitignore
+.gradle
+build
+out
+.idea
+*.iml
+.vscode
+*.md
+.env
+*.env.local
+docker-compose.yml
+Dockerfile
+.dockerignore

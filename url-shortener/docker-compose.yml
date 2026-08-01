@@ -1,0 +1,69 @@
+# Local/staging stack: Spring Boot app + PostgreSQL + Redis.
+# No top-level `version:` key - it's part of the obsolete Compose v1 file format;
+# Docker Compose v2 (the `docker compose` CLI) reads this as the modern Compose Specification.
+#
+# Secrets/credentials below have local-only defaults via `${VAR:-default}` so
+# `docker compose up` works out of the box; override real values with a git-ignored
+# `.env` file (see .gitignore) or real environment variables/secrets manager in any
+# shared environment - never commit actual credentials.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${DB_NAME:-urlshortener}
+      POSTGRES_USER: ${DB_USERNAME:-urlshortener}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-urlshortener}
+    volumes:
+      # Named volume so data survives `docker compose down` (but not `down -v`) -
+      # container restarts/rebuilds must not silently wipe the database.
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # Confirms Postgres is accepting connections for THIS db/user, not just that the process is up.
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-urlshortener} -d ${DB_NAME:-urlshortener}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.2-alpine
+    # No volume: Redis here is purely a cache/rate-limit counter store (see CacheService,
+    # RateLimitInterceptor) - every entry has an app-managed TTL and the app tolerates a
+    # cold/empty cache, so persisting it across restarts would add complexity for no benefit.
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${SERVER_PORT:-8080}:8080"
+    environment:
+      # Matches the ${VAR:default} placeholders read directly by application.yml.
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
+      DB_URL: jdbc:postgresql://postgres:5432/${DB_NAME:-urlshortener}
+      DB_USERNAME: ${DB_USERNAME:-urlshortener}
+      DB_PASSWORD: ${DB_PASSWORD:-urlshortener}
+      # Service name "redis" resolves via Compose's built-in DNS on its default network.
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      SNOWFLAKE_NODE_ID: ${SNOWFLAKE_NODE_ID:-0}
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:8080}
+    depends_on:
+      # "service_healthy" (not just "started") - Postgres/Redis accept TCP connections
+      # before they're actually ready, which would otherwise fail Flyway migrations
+      # or the first cache call on a cold app start.
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
