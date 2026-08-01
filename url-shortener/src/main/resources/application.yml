@@ -25,7 +25,16 @@ spring:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD:}
-      timeout: 2000ms
+      connect-timeout: ${REDIS_CONNECT_TIMEOUT:1000ms}
+      timeout: ${REDIS_COMMAND_TIMEOUT:500ms}
+      lettuce:
+        pool:
+          enabled: true
+          max-active: ${REDIS_POOL_MAX_ACTIVE:16}
+          max-idle: ${REDIS_POOL_MAX_IDLE:16}
+          min-idle: ${REDIS_POOL_MIN_IDLE:4}
+          max-wait: ${REDIS_POOL_MAX_WAIT:500ms}
+        shutdown-timeout: 200ms
 
 app:
   rate-limit:
@@ -36,12 +45,35 @@ app:
   snowflake:
     # Must be unique per running instance (0-1023) - see SnowflakeConfig.
     node-id: ${SNOWFLAKE_NODE_ID:0}
+  cache:
+    # Long-lived: link contents are near-immutable, and every mutation path evicts/refreshes explicitly.
+    link-ttl-seconds: ${LINK_CACHE_TTL_SECONDS:21600}
+    # Short-lived: bounds staleness of the read-aggregated click counters between explicit invalidations.
+    analytics-ttl-seconds: ${ANALYTICS_CACHE_TTL_SECONDS:30}
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      redisCache:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 20
+        minimum-number-of-calls: 10
+        failure-rate-threshold: 50
+        slow-call-duration-threshold: 300ms
+        slow-call-rate-threshold: 80
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 5
+        automatic-transition-from-open-to-half-open-enabled: true
+        record-exceptions:
+          - org.springframework.data.redis.RedisConnectionFailureException
+          - org.springframework.data.redis.RedisSystemException
+          - java.util.concurrent.TimeoutException
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics,prometheus
+        include: health,info,metrics,prometheus,circuitbreakers
   endpoint:
     health:
       probes:

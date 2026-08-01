@@ -1,5 +1,7 @@
 package com.urlshortener.service.impl;
 
+import com.urlshortener.cache.CacheKeys;
+import com.urlshortener.cache.CacheService;
 import com.urlshortener.domain.Link;
 import com.urlshortener.dto.CreateLinkRequest;
 import com.urlshortener.dto.LinkResponse;
@@ -14,9 +16,9 @@ import com.urlshortener.service.UrlService;
 import com.urlshortener.service.UrlValidationService;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.concurrent.TimeUnit;
+import java.util.Optional;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
-import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -33,25 +35,25 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class UrlServiceImpl implements UrlService {
 
-	private static final String LINK_CACHE_PREFIX = "link:";
-	private static final Duration LINK_CACHE_TTL = Duration.ofHours(6);
-
 	private final LinkRepository linkRepository;
 	private final ShortCodeGeneratorService shortCodeGeneratorService;
 	private final UrlValidationService urlValidationService;
-	private final RedisTemplate<String, Object> redisTemplate;
+	private final CacheService cacheService;
 	private final ApplicationEventPublisher eventPublisher;
+	private final Duration linkCacheTtl;
 
 	public UrlServiceImpl(LinkRepository linkRepository,
 			ShortCodeGeneratorService shortCodeGeneratorService,
 			UrlValidationService urlValidationService,
-			RedisTemplate<String, Object> redisTemplate,
-			ApplicationEventPublisher eventPublisher) {
+			CacheService cacheService,
+			ApplicationEventPublisher eventPublisher,
+			@Value("${app.cache.link-ttl-seconds}") long linkCacheTtlSeconds) {
 		this.linkRepository = linkRepository;
 		this.shortCodeGeneratorService = shortCodeGeneratorService;
 		this.urlValidationService = urlValidationService;
-		this.redisTemplate = redisTemplate;
+		this.cacheService = cacheService;
 		this.eventPublisher = eventPublisher;
+		this.linkCacheTtl = Duration.ofSeconds(linkCacheTtlSeconds);
 	}
 
 	/**
@@ -139,7 +141,7 @@ public class UrlServiceImpl implements UrlService {
 				.orElseThrow(() -> new LinkNotFoundException(shortCode));
 		link.deactivate();
 		linkRepository.save(link);
-		redisTemplate.delete(LINK_CACHE_PREFIX + shortCode);
+		cacheService.evict(CacheKeys.link(shortCode));
 	}
 
 	/**
@@ -162,9 +164,9 @@ public class UrlServiceImpl implements UrlService {
 
 	/** Cache-aside read: serve from Redis when present, otherwise load from Postgres and populate the cache. */
 	private Link loadLink(String shortCode) {
-		Object cached = redisTemplate.opsForValue().get(LINK_CACHE_PREFIX + shortCode);
-		if (cached instanceof Link cachedLink) {
-			return cachedLink;
+		Optional<Link> cached = cacheService.get(CacheKeys.link(shortCode), Link.class);
+		if (cached.isPresent()) {
+			return cached.get();
 		}
 		Link link = linkRepository.findByShortCode(shortCode)
 				.orElseThrow(() -> new LinkNotFoundException(shortCode));
@@ -174,8 +176,7 @@ public class UrlServiceImpl implements UrlService {
 
 	/** Write-through cache population, keyed by short code, with a TTL longer than any realistic redirect burst. */
 	private void cacheLink(Link link) {
-		redisTemplate.opsForValue().set(
-				LINK_CACHE_PREFIX + link.getShortCode(), link, LINK_CACHE_TTL.toSeconds(), TimeUnit.SECONDS);
+		cacheService.put(CacheKeys.link(link.getShortCode()), link, linkCacheTtl);
 	}
 
 	/** Maps the persistence-layer entity to the API-facing response shape. */

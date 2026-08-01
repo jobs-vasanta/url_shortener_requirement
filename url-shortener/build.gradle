@@ -43,12 +43,14 @@ dependencies {
 
 	// Caching
 	implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+	implementation 'org.apache.commons:commons-pool2'
 
 	// Security
 	implementation 'org.springframework.boot:spring-boot-starter-security'
 
 	// Resilience / Observability
 	implementation "io.github.resilience4j:resilience4j-spring-boot3:${resilience4jVersion}"
+	implementation 'org.springframework.boot:spring-boot-starter-aop'
 	implementation 'org.springframework.boot:spring-boot-starter-actuator'
 	implementation 'io.micrometer:micrometer-registry-prometheus'
 

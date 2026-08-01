@@ -10,6 +10,10 @@ import org.springframework.data.redis.serializer.StringRedisSerializer;
 /**
  * Redis is used as a read-through cache for link lookups and as the backing
  * store for distributed rate-limit counters (see {@link RateLimitProperties}).
+ * Connection pooling (Lettuce + commons-pool2) and timeouts are configured via
+ * {@code spring.data.redis.*} properties (application.yml); all access beyond this
+ * template goes through {@link com.urlshortener.cache.CacheService}, which adds the
+ * circuit-breaker fallback that keeps a Redis outage from failing requests.
  */
 @Configuration
 public class RedisConfig {

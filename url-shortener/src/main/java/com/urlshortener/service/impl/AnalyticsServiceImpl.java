@@ -1,5 +1,7 @@
 package com.urlshortener.service.impl;
 
+import com.urlshortener.cache.CacheKeys;
+import com.urlshortener.cache.CacheService;
 import com.urlshortener.domain.ClickEvent;
 import com.urlshortener.domain.Link;
 import com.urlshortener.dto.AnalyticsResponse;
@@ -11,8 +13,8 @@ import com.urlshortener.service.AnalyticsService;
 import com.urlshortener.util.HashUtil;
 import java.time.Instant;
 import java.time.Duration;
-import java.util.concurrent.TimeUnit;
-import org.springframework.data.redis.core.RedisTemplate;
+import java.util.Optional;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
@@ -22,18 +24,18 @@ import org.springframework.stereotype.Service;
 @Service
 public class AnalyticsServiceImpl implements AnalyticsService {
 
-	private static final String ANALYTICS_CACHE_PREFIX = "analytics:";
-	private static final Duration ANALYTICS_CACHE_TTL = Duration.ofSeconds(30);
-
 	private final LinkRepository linkRepository;
 	private final ClickEventRepository clickEventRepository;
-	private final RedisTemplate<String, Object> redisTemplate;
+	private final CacheService cacheService;
+	private final Duration analyticsCacheTtl;
 
 	public AnalyticsServiceImpl(LinkRepository linkRepository, ClickEventRepository clickEventRepository,
-			RedisTemplate<String, Object> redisTemplate) {
+			CacheService cacheService,
+			@Value("${app.cache.analytics-ttl-seconds}") long analyticsCacheTtlSeconds) {
 		this.linkRepository = linkRepository;
 		this.clickEventRepository = clickEventRepository;
-		this.redisTemplate = redisTemplate;
+		this.cacheService = cacheService;
+		this.analyticsCacheTtl = Duration.ofSeconds(analyticsCacheTtlSeconds);
 	}
 
 	@Override
@@ -47,7 +49,7 @@ public class AnalyticsServiceImpl implements AnalyticsService {
 				HashUtil.sha256Hex(remoteIp));
 		clickEventRepository.save(event);
 		linkRepository.incrementClickCount(linkId, now);
-		redisTemplate.delete(ANALYTICS_CACHE_PREFIX + linkId);
+		cacheService.evict(CacheKeys.analytics(linkId));
 	}
 
 	@Override
@@ -55,10 +57,10 @@ public class AnalyticsServiceImpl implements AnalyticsService {
 		Link link = linkRepository.findByShortCode(shortCode)
 				.orElseThrow(() -> new LinkNotFoundException(shortCode));
 
-		String cacheKey = ANALYTICS_CACHE_PREFIX + link.getId();
-		AnalyticsResponse cached = (AnalyticsResponse) redisTemplate.opsForValue().get(cacheKey);
-		if (cached != null) {
-			return cached;
+		String cacheKey = CacheKeys.analytics(link.getId());
+		Optional<AnalyticsResponse> cached = cacheService.get(cacheKey, AnalyticsResponse.class);
+		if (cached.isPresent()) {
+			return cached.get();
 		}
 
 		// Denormalized counter (fast PK read) rather than COUNT(*) over click_events on every request.
@@ -67,7 +69,7 @@ public class AnalyticsServiceImpl implements AnalyticsService {
 
 		AnalyticsResponse response = new AnalyticsResponse(
 				shortCode, totalClicks, accessWindow.firstAccessedAt(), accessWindow.lastAccessedAt());
-		redisTemplate.opsForValue().set(cacheKey, response, ANALYTICS_CACHE_TTL.toSeconds(), TimeUnit.SECONDS);
+		cacheService.put(cacheKey, response, analyticsCacheTtl);
 		return response;
 	}
 }
