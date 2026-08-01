@@ -2,6 +2,7 @@ package com.urlshortener.service.impl;
 
 import com.urlshortener.cache.CacheKeys;
 import com.urlshortener.cache.CacheService;
+import com.urlshortener.domain.ApiKeyTier;
 import com.urlshortener.domain.Link;
 import com.urlshortener.domain.LinkStatus;
 import com.urlshortener.dto.CreateLinkRequest;
@@ -11,6 +12,7 @@ import com.urlshortener.dto.UpdateLinkRequest;
 import com.urlshortener.event.ClickRecordedEvent;
 import com.urlshortener.exception.LinkGoneException;
 import com.urlshortener.exception.LinkNotFoundException;
+import com.urlshortener.exception.TtlExceedsPlanLimitException;
 import com.urlshortener.repository.LinkRepository;
 import com.urlshortener.service.ClickContext;
 import com.urlshortener.service.ShortCodeGeneratorService;
@@ -65,12 +67,12 @@ public class UrlServiceImpl implements UrlService {
 	 */
 	@Override
 	@Transactional
-	public LinkResponse createLink(CreateLinkRequest request) {
+	public LinkResponse createLink(CreateLinkRequest request, ApiKeyTier tier) {
 		urlValidationService.validate(request.longUrl());
 
 		String shortCode = resolveShortCode(request);
 		Instant now = Instant.now();
-		Instant expiresAt = computeExpiry(request.ttlSeconds(), now);
+		Instant expiresAt = computeExpiry(request.ttlSeconds(), tier, now);
 
 		Link link = new Link(shortCode, request.longUrl(), now, expiresAt);
 		linkRepository.save(link);
@@ -112,12 +114,12 @@ public class UrlServiceImpl implements UrlService {
 	 */
 	@Override
 	@Transactional
-	public LinkResponse updateLink(String shortCode, UpdateLinkRequest request) {
+	public LinkResponse updateLink(String shortCode, UpdateLinkRequest request, ApiKeyTier tier) {
 		Link link = linkRepository.findByShortCode(shortCode)
 				.orElseThrow(() -> new LinkNotFoundException(shortCode));
 
 		if (request.ttlSeconds() != null) {
-			link.updateExpiresAt(Instant.now().plusSeconds(request.ttlSeconds()));
+			link.updateExpiresAt(computeExpiry(request.ttlSeconds(), tier, Instant.now()));
 		}
 		if (request.active() != null) {
 			if (request.active()) {
@@ -160,13 +162,23 @@ public class UrlServiceImpl implements UrlService {
 	}
 
 	/**
-	 * Translates an optional relative TTL (seconds from now) into an absolute expiry instant.
-	 * Every link must expire within 30 days, so omitting {@code ttlSeconds} defaults to the full
-	 * 30-day maximum rather than "never" - {@code @Max(RequestLimits.MAX_TTL_SECONDS)} on the DTO
-	 * already prevents a caller-supplied value from exceeding that same ceiling.
+	 * Translates an optional relative TTL into an absolute expiry instant, tier-dependent: a
+	 * premium caller may go without an expiry entirely (null = never), while a free-tier caller
+	 * always gets one - defaulting to, and capped at, {@link RequestLimits#FREE_MAX_TTL_SECONDS}
+	 * regardless of what the DTO's more permissive {@code @Max} validation let through (that
+	 * annotation is sized for premium; the free-tier cap can only be enforced here, where the
+	 * resolved tier is actually known).
 	 */
-	private Instant computeExpiry(Long ttlSeconds, Instant now) {
-		long effectiveTtlSeconds = ttlSeconds != null ? ttlSeconds : RequestLimits.DEFAULT_TTL_SECONDS;
+	private Instant computeExpiry(Long ttlSeconds, ApiKeyTier tier, Instant now) {
+		if (tier == ApiKeyTier.PREMIUM) {
+			return ttlSeconds != null ? now.plusSeconds(ttlSeconds) : null;
+		}
+		long effectiveTtlSeconds = ttlSeconds != null ? ttlSeconds : RequestLimits.FREE_DEFAULT_TTL_SECONDS;
+		if (effectiveTtlSeconds > RequestLimits.FREE_MAX_TTL_SECONDS) {
+			throw new TtlExceedsPlanLimitException(
+					"ttlSeconds exceeds the free-tier limit of " + RequestLimits.FREE_MAX_TTL_SECONDS
+							+ " seconds (30 days); upgrade to Premium for a longer or non-expiring link");
+		}
 		return now.plusSeconds(effectiveTtlSeconds);
 	}
 

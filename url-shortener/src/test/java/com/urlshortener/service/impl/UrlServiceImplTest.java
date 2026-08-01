@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 
 import com.urlshortener.cache.CacheKeys;
 import com.urlshortener.cache.CacheService;
+import com.urlshortener.domain.ApiKeyTier;
 import com.urlshortener.domain.Link;
 import com.urlshortener.domain.LinkStatus;
 import com.urlshortener.dto.CreateLinkRequest;
@@ -22,6 +23,7 @@ import com.urlshortener.event.ClickRecordedEvent;
 import com.urlshortener.exception.InvalidUrlException;
 import com.urlshortener.exception.LinkGoneException;
 import com.urlshortener.exception.LinkNotFoundException;
+import com.urlshortener.exception.TtlExceedsPlanLimitException;
 import com.urlshortener.repository.LinkRepository;
 import com.urlshortener.service.ClickContext;
 import com.urlshortener.service.ShortCodeGeneratorService;
@@ -80,7 +82,7 @@ class UrlServiceImplTest {
 		when(shortCodeGeneratorService.generate()).thenReturn("gen123");
 		CreateLinkRequest request = new CreateLinkRequest("https://example.com/page", null, null);
 
-		LinkResponse response = urlService.createLink(request);
+		LinkResponse response = urlService.createLink(request, ApiKeyTier.FREE);
 
 		assertThat(response.shortCode()).isEqualTo("gen123");
 		assertThat(response.originalUrl()).isEqualTo("https://example.com/page");
@@ -97,7 +99,7 @@ class UrlServiceImplTest {
 		// as-is - the generator must never be invoked in this path.
 		CreateLinkRequest request = new CreateLinkRequest("https://example.com/page", "my-alias", null);
 
-		LinkResponse response = urlService.createLink(request);
+		LinkResponse response = urlService.createLink(request, ApiKeyTier.FREE);
 
 		assertThat(response.shortCode()).isEqualTo("my-alias");
 		verify(shortCodeGeneratorService).validateAliasAvailable("my-alias");
@@ -112,7 +114,7 @@ class UrlServiceImplTest {
 		CreateLinkRequest request = new CreateLinkRequest("https://example.com/page", null, 60L);
 
 		Instant before = Instant.now();
-		LinkResponse response = urlService.createLink(request);
+		LinkResponse response = urlService.createLink(request, ApiKeyTier.FREE);
 		Instant after = Instant.now();
 
 		assertThat(response.expiresAt()).isNotNull();
@@ -121,19 +123,60 @@ class UrlServiceImplTest {
 
 	@Test
 	void createLink_withoutTtlSeconds_defaultsToThirtyDayExpiry() {
-		// Edge case: every link must expire within 30 days now - omitting ttlSeconds must default
+		// Edge case: a free-tier link must expire within 30 days - omitting ttlSeconds must default
 		// to that 30-day ceiling, not "never expires".
 		when(shortCodeGeneratorService.generate()).thenReturn("gen123");
 		CreateLinkRequest request = new CreateLinkRequest("https://example.com/page", null, null);
 
 		Instant before = Instant.now();
-		LinkResponse response = urlService.createLink(request);
+		LinkResponse response = urlService.createLink(request, ApiKeyTier.FREE);
 		Instant after = Instant.now();
 
 		assertThat(response.expiresAt()).isNotNull();
 		assertThat(response.expiresAt()).isBetween(
-				before.plusSeconds(RequestLimits.DEFAULT_TTL_SECONDS),
-				after.plusSeconds(RequestLimits.DEFAULT_TTL_SECONDS));
+				before.plusSeconds(RequestLimits.FREE_DEFAULT_TTL_SECONDS),
+				after.plusSeconds(RequestLimits.FREE_DEFAULT_TTL_SECONDS));
+	}
+
+	@Test
+	void createLink_freeTier_withTtlSecondsOverFreeCap_throwsTtlExceedsPlanLimitException() {
+		// Bean Validation's @Max is sized for premium (a much larger ceiling), so a free-tier caller
+		// can still submit a value that passes DTO validation but must be rejected here in the
+		// service layer, where the resolved tier is actually known.
+		CreateLinkRequest request = new CreateLinkRequest("https://example.com/page", null,
+				RequestLimits.FREE_MAX_TTL_SECONDS + 1);
+
+		assertThatThrownBy(() -> urlService.createLink(request, ApiKeyTier.FREE))
+				.isInstanceOf(TtlExceedsPlanLimitException.class);
+
+		verify(linkRepository, never()).save(any());
+		verify(cacheService, never()).put(any(), any(), any());
+	}
+
+	@Test
+	void createLink_premiumTier_withoutTtlSeconds_neverExpires() {
+		// The premium payoff: omitting ttlSeconds for a premium caller means no expiration at all,
+		// unlike the free-tier default of a mandatory 30-day expiry.
+		when(shortCodeGeneratorService.generate()).thenReturn("gen123");
+		CreateLinkRequest request = new CreateLinkRequest("https://example.com/page", null, null);
+
+		LinkResponse response = urlService.createLink(request, ApiKeyTier.PREMIUM);
+
+		assertThat(response.expiresAt()).isNull();
+	}
+
+	@Test
+	void createLink_premiumTier_withTtlSecondsOverFreeCap_isAllowed() {
+		// Premium callers bypass the free-tier 30-day cap entirely when they do specify a ttl.
+		when(shortCodeGeneratorService.generate()).thenReturn("gen123");
+		long ttlSeconds = RequestLimits.FREE_MAX_TTL_SECONDS + 1;
+		CreateLinkRequest request = new CreateLinkRequest("https://example.com/page", null, ttlSeconds);
+
+		Instant before = Instant.now();
+		LinkResponse response = urlService.createLink(request, ApiKeyTier.PREMIUM);
+		Instant after = Instant.now();
+
+		assertThat(response.expiresAt()).isBetween(before.plusSeconds(ttlSeconds), after.plusSeconds(ttlSeconds));
 	}
 
 	@Test
@@ -144,7 +187,7 @@ class UrlServiceImplTest {
 		org.mockito.Mockito.doThrow(new InvalidUrlException("URL scheme must be http or https"))
 				.when(urlValidationService).validate("ftp://example.com");
 
-		assertThatThrownBy(() -> urlService.createLink(request)).isInstanceOf(InvalidUrlException.class);
+		assertThatThrownBy(() -> urlService.createLink(request, ApiKeyTier.FREE)).isInstanceOf(InvalidUrlException.class);
 
 		verify(linkRepository, never()).save(any());
 		verify(cacheService, never()).put(any(), any(), any());
@@ -266,7 +309,7 @@ class UrlServiceImplTest {
 		when(linkRepository.findByShortCode("abc")).thenReturn(Optional.of(link));
 		UpdateLinkRequest request = new UpdateLinkRequest(120L, null);
 
-		LinkResponse response = urlService.updateLink("abc", request);
+		LinkResponse response = urlService.updateLink("abc", request, ApiKeyTier.FREE);
 
 		assertThat(response.status()).isEqualTo("ACTIVE");
 		assertThat(link.getExpiresAt()).isAfter(Instant.now().plusSeconds(100));
@@ -280,7 +323,7 @@ class UrlServiceImplTest {
 		when(linkRepository.findByShortCode("abc")).thenReturn(Optional.of(link));
 		UpdateLinkRequest request = new UpdateLinkRequest(null, false);
 
-		LinkResponse response = urlService.updateLink("abc", request);
+		LinkResponse response = urlService.updateLink("abc", request, ApiKeyTier.FREE);
 
 		assertThat(response.status()).isEqualTo("DEACTIVATED");
 	}
@@ -293,7 +336,7 @@ class UrlServiceImplTest {
 		when(linkRepository.findByShortCode("abc")).thenReturn(Optional.of(link));
 		UpdateLinkRequest request = new UpdateLinkRequest(null, true);
 
-		LinkResponse response = urlService.updateLink("abc", request);
+		LinkResponse response = urlService.updateLink("abc", request, ApiKeyTier.FREE);
 
 		assertThat(response.status()).isEqualTo("ACTIVE");
 	}
@@ -302,8 +345,34 @@ class UrlServiceImplTest {
 	void updateLink_throwsLinkNotFoundException_whenMissing() {
 		when(linkRepository.findByShortCode("missing")).thenReturn(Optional.empty());
 
-		assertThatThrownBy(() -> urlService.updateLink("missing", new UpdateLinkRequest(60L, null)))
+		assertThatThrownBy(() -> urlService.updateLink("missing", new UpdateLinkRequest(60L, null), ApiKeyTier.FREE))
 				.isInstanceOf(LinkNotFoundException.class);
+	}
+
+	@Test
+	void updateLink_freeTier_withTtlSecondsOverFreeCap_throwsTtlExceedsPlanLimitException() {
+		Link link = activeLink("abc", "https://example.com", null);
+		when(linkRepository.findByShortCode("abc")).thenReturn(Optional.of(link));
+		UpdateLinkRequest request = new UpdateLinkRequest(RequestLimits.FREE_MAX_TTL_SECONDS + 1, null);
+
+		assertThatThrownBy(() -> urlService.updateLink("abc", request, ApiKeyTier.FREE))
+				.isInstanceOf(TtlExceedsPlanLimitException.class);
+
+		verify(linkRepository, never()).save(any());
+	}
+
+	@Test
+	void updateLink_premiumTier_allowsTtlSecondsOverFreeCap() {
+		Link link = activeLink("abc", "https://example.com", null);
+		when(linkRepository.findByShortCode("abc")).thenReturn(Optional.of(link));
+		long ttlSeconds = RequestLimits.FREE_MAX_TTL_SECONDS + 1;
+		UpdateLinkRequest request = new UpdateLinkRequest(ttlSeconds, null);
+
+		Instant before = Instant.now();
+		urlService.updateLink("abc", request, ApiKeyTier.PREMIUM);
+		Instant after = Instant.now();
+
+		assertThat(link.getExpiresAt()).isBetween(before.plusSeconds(ttlSeconds), after.plusSeconds(ttlSeconds));
 	}
 
 	// --- deactivate ----------------------------------------------------------------------------

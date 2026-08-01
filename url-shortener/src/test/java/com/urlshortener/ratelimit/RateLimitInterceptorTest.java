@@ -10,7 +10,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.urlshortener.config.RateLimitProperties;
+import com.urlshortener.domain.ApiKeyTier;
 import com.urlshortener.exception.RateLimitExceededException;
+import com.urlshortener.service.ApiKeyService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.time.Duration;
@@ -40,6 +42,8 @@ class RateLimitInterceptorTest {
 	private HttpServletRequest request;
 	@Mock
 	private HttpServletResponse response;
+	@Mock
+	private ApiKeyService apiKeyService;
 
 	private RateLimitProperties properties;
 	private RateLimitInterceptor interceptor;
@@ -48,11 +52,15 @@ class RateLimitInterceptorTest {
 	void setUp() {
 		properties = new RateLimitProperties();
 		properties.setLimitForPeriod(5);
+		properties.setPremiumLimitForPeriod(50);
 		properties.setPeriodSeconds(60);
 		properties.setFailOpen(true);
-		interceptor = new RateLimitInterceptor(stringRedisTemplate, properties);
+		interceptor = new RateLimitInterceptor(stringRedisTemplate, properties, apiKeyService);
 
 		when(request.getRemoteAddr()).thenReturn("10.0.0.1");
+		// No X-Api-Key header by default -> resolves to FREE, preserving every existing test's
+		// prior (pre-tier-aware) behavior.
+		when(apiKeyService.resolveTier(any())).thenReturn(ApiKeyTier.FREE);
 	}
 
 	// --- Happy path -----------------------------------------------------------------------
@@ -124,6 +132,48 @@ class RateLimitInterceptorTest {
 		interceptor.preHandle(request, response, new Object());
 
 		verify(valueOperations).increment(org.mockito.ArgumentMatchers.contains("10.0.0.1"));
+	}
+
+	// --- Premium tier -----------------------------------------------------------------------
+
+	@Test
+	void preHandle_usesPremiumLimit_whenApiKeyResolvesToPremiumTier() {
+		// A count that would exceed the free limit (5) must still be allowed once the caller
+		// resolves to PREMIUM, because the interceptor should be checking against
+		// getPremiumLimitForPeriod() (50) instead of getLimitForPeriod().
+		when(request.getHeader("X-Api-Key")).thenReturn("premium-raw-key");
+		when(apiKeyService.resolveTier("premium-raw-key")).thenReturn(ApiKeyTier.PREMIUM);
+		when(stringRedisTemplate.opsForValue()).thenReturn(valueOperations);
+		when(valueOperations.increment(anyString())).thenReturn(20L);
+
+		boolean result = interceptor.preHandle(request, response, new Object());
+
+		assertThat(result).isTrue();
+	}
+
+	@Test
+	void preHandle_premiumTier_stillThrows_whenOverThePremiumLimit() {
+		when(request.getHeader("X-Api-Key")).thenReturn("premium-raw-key");
+		when(apiKeyService.resolveTier("premium-raw-key")).thenReturn(ApiKeyTier.PREMIUM);
+		when(stringRedisTemplate.opsForValue()).thenReturn(valueOperations);
+		when(valueOperations.increment(anyString())).thenReturn(51L);
+
+		assertThatThrownBy(() -> interceptor.preHandle(request, response, new Object()))
+				.isInstanceOf(RateLimitExceededException.class);
+	}
+
+	@Test
+	void preHandle_partitionsByApiKey_ratherThanRemoteAddress_whenApiKeyPresent() {
+		// Once a key is presented, quota should track the key's identity, not the (potentially
+		// shared, e.g. behind a corporate NAT) egress IP.
+		when(request.getHeader("X-Api-Key")).thenReturn("premium-raw-key");
+		when(apiKeyService.resolveTier("premium-raw-key")).thenReturn(ApiKeyTier.PREMIUM);
+		when(stringRedisTemplate.opsForValue()).thenReturn(valueOperations);
+		when(valueOperations.increment(anyString())).thenReturn(1L);
+
+		interceptor.preHandle(request, response, new Object());
+
+		verify(valueOperations).increment(org.mockito.ArgumentMatchers.contains("key:"));
 	}
 
 	// --- Redis-unavailable (fail-open / fail-closed) -----------------------------------------

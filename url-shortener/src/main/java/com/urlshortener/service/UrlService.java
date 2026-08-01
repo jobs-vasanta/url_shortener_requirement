@@ -1,5 +1,6 @@
 package com.urlshortener.service;
 
+import com.urlshortener.domain.ApiKeyTier;
 import com.urlshortener.dto.CreateLinkRequest;
 import com.urlshortener.dto.LinkResponse;
 import com.urlshortener.dto.UpdateLinkRequest;
@@ -16,9 +17,10 @@ public interface UrlService {
 	 * Creates a new short link: validates the target URL, assigns a short code
 	 * (generated, or the caller's alias if one was supplied and is available),
 	 * persists it, and populates the Redis cache so the very first redirect is
-	 * already a cache hit.
+	 * already a cache hit. {@code tier} (resolved from the caller's API key) determines
+	 * the link's expiration behavior - see UrlServiceImpl#computeExpiry.
 	 */
-	LinkResponse createLink(CreateLinkRequest request);
+	LinkResponse createLink(CreateLinkRequest request, ApiKeyTier tier);
 
 	/**
 	 * Resolves a short code to its original URL for redirection. Enforces active/
@@ -32,9 +34,10 @@ public interface UrlService {
 
 	/**
 	 * Applies a partial update: reactivates/deactivates when {@code active} is present,
-	 * and/or replaces the expiry when {@code ttlSeconds} is present. Fields left null are unchanged.
+	 * and/or replaces the expiry when {@code ttlSeconds} is present (subject to the same
+	 * tier-dependent cap as create). Fields left null are unchanged.
 	 */
-	LinkResponse updateLink(String shortCode, UpdateLinkRequest request);
+	LinkResponse updateLink(String shortCode, UpdateLinkRequest request, ApiKeyTier tier);
 
 	/** Marks a link DEACTIVATED so subsequent redirects return 410 Gone, and evicts it from cache. */
 	void deactivate(String shortCode);

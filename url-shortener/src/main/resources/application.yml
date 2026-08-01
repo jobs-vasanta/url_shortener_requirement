@@ -39,6 +39,8 @@ spring:
 app:
   rate-limit:
     limit-for-period: ${RATE_LIMIT_COUNT:20}
+    # Higher allowance for callers resolved to PREMIUM via the X-Api-Key header - see ApiKeyService.
+    premium-limit-for-period: ${RATE_LIMIT_PREMIUM_COUNT:200}
     period-seconds: ${RATE_LIMIT_PERIOD_SECONDS:60}
     fail-open: ${RATE_LIMIT_FAIL_OPEN:true}
   base-url: ${APP_BASE_URL:http://localhost:8080}

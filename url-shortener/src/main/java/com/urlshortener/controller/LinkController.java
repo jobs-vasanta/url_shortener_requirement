@@ -1,9 +1,11 @@
 package com.urlshortener.controller;
 
+import com.urlshortener.domain.ApiKeyTier;
 import com.urlshortener.dto.CreateLinkRequest;
 import com.urlshortener.dto.ErrorResponse;
 import com.urlshortener.dto.LinkResponse;
 import com.urlshortener.dto.UpdateLinkRequest;
+import com.urlshortener.service.ApiKeyService;
 import com.urlshortener.service.UrlService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -22,6 +24,7 @@ import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -36,20 +39,25 @@ import org.springframework.web.bind.annotation.RestController;
 @Tag(name = "Links", description = "Create, inspect, update, and deactivate short links")
 public class LinkController {
 
-	private final UrlService urlService;
+	private static final String API_KEY_HEADER = "X-Api-Key";
 
-	public LinkController(UrlService urlService) {
+	private final UrlService urlService;
+	private final ApiKeyService apiKeyService;
+
+	public LinkController(UrlService urlService, ApiKeyService apiKeyService) {
 		this.urlService = urlService;
+		this.apiKeyService = apiKeyService;
 	}
 
 	@Operation(summary = "Create a short link",
 			description = "Validates the target URL, assigns a short code (or uses the supplied alias), and persists it. "
-					+ "`ttlSeconds` is optional but capped at 30 days; omitting it defaults to the full 30-day expiry - "
-					+ "there is no option for a link that never expires.")
+					+ "`ttlSeconds` is optional. Free-tier callers (no `X-Api-Key`, or an unrecognized/inactive one) get a "
+					+ "mandatory 30-day cap and default; premium callers may omit it for a link that never expires, or set "
+					+ "an explicit value up to a much larger ceiling.")
 	@ApiResponses({
 			@ApiResponse(responseCode = "201", description = "Link created",
 					content = @Content(schema = @Schema(implementation = LinkResponse.class))),
-			@ApiResponse(responseCode = "400", description = "Invalid URL or request body",
+			@ApiResponse(responseCode = "400", description = "Invalid URL/request body, or ttlSeconds exceeds the free-tier limit",
 					content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
 			@ApiResponse(responseCode = "409", description = "Alias already in use",
 					content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
@@ -57,8 +65,12 @@ public class LinkController {
 					content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
 	})
 	@PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
-	public ResponseEntity<LinkResponse> createLink(@Valid @RequestBody CreateLinkRequest request) {
-		LinkResponse response = urlService.createLink(request);
+	public ResponseEntity<LinkResponse> createLink(
+			@Valid @RequestBody CreateLinkRequest request,
+			@Parameter(description = "Optional API key; resolves the caller's plan tier (defaults to free if omitted/unrecognized)")
+			@RequestHeader(value = API_KEY_HEADER, required = false) String apiKey) {
+		ApiKeyTier tier = apiKeyService.resolveTier(apiKey);
+		LinkResponse response = urlService.createLink(request, tier);
 		return ResponseEntity.status(HttpStatus.CREATED).body(response);
 	}
 
@@ -76,12 +88,12 @@ public class LinkController {
 	}
 
 	@Operation(summary = "Partially update a link",
-			description = "Reactivates/deactivates via `active`, and/or replaces the expiry via `ttlSeconds`. "
-					+ "Omitted fields are left unchanged.")
+			description = "Reactivates/deactivates via `active`, and/or replaces the expiry via `ttlSeconds` (subject to the "
+					+ "same tier-dependent cap as create - see `X-Api-Key`). Omitted fields are left unchanged.")
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "Link updated",
 					content = @Content(schema = @Schema(implementation = LinkResponse.class))),
-			@ApiResponse(responseCode = "400", description = "Invalid request body",
+			@ApiResponse(responseCode = "400", description = "Invalid request body, or ttlSeconds exceeds the free-tier limit",
 					content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
 			@ApiResponse(responseCode = "404", description = "No link for this short code",
 					content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
@@ -89,8 +101,11 @@ public class LinkController {
 	@PatchMapping(value = "/{shortCode}", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
 	public ResponseEntity<LinkResponse> updateLink(
 			@Parameter(description = "Short code identifying the link") @PathVariable String shortCode,
-			@Valid @RequestBody UpdateLinkRequest request) {
-		return ResponseEntity.ok(urlService.updateLink(shortCode, request));
+			@Valid @RequestBody UpdateLinkRequest request,
+			@Parameter(description = "Optional API key; resolves the caller's plan tier (defaults to free if omitted/unrecognized)")
+			@RequestHeader(value = API_KEY_HEADER, required = false) String apiKey) {
+		ApiKeyTier tier = apiKeyService.resolveTier(apiKey);
+		return ResponseEntity.ok(urlService.updateLink(shortCode, request, tier));
 	}
 
 	@Operation(summary = "Deactivate a link", description = "Idempotent: marks the link DEACTIVATED so future redirects return 410 Gone.")

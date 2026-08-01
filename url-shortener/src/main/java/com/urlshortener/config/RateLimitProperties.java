@@ -16,6 +16,9 @@ public class RateLimitProperties {
 	/** Max requests allowed per window, per client IP. */
 	private int limitForPeriod = 20;
 
+	/** Max requests allowed per window, per premium-tier client - see ApiKeyService. */
+	private int premiumLimitForPeriod = 200;
+
 	/** Length of the sliding window, in seconds. */
 	private int periodSeconds = 60;
 
@@ -28,6 +31,14 @@ public class RateLimitProperties {
 
 	public void setLimitForPeriod(int limitForPeriod) {
 		this.limitForPeriod = limitForPeriod;
+	}
+
+	public int getPremiumLimitForPeriod() {
+		return premiumLimitForPeriod;
+	}
+
+	public void setPremiumLimitForPeriod(int premiumLimitForPeriod) {
+		this.premiumLimitForPeriod = premiumLimitForPeriod;
 	}
 
 	public int getPeriodSeconds() {

@@ -12,7 +12,7 @@ import jakarta.validation.constraints.Positive;
 public record UpdateLinkRequest(
 
 		@Positive(message = "ttlSeconds must be positive")
-		@Max(value = RequestLimits.MAX_TTL_SECONDS, message = "ttlSeconds must be at most " + RequestLimits.MAX_TTL_SECONDS + " (30 days)")
+		@Max(value = RequestLimits.MAX_TTL_SECONDS, message = "ttlSeconds must be at most " + RequestLimits.MAX_TTL_SECONDS + " seconds")
 		Long ttlSeconds,
 
 		Boolean active

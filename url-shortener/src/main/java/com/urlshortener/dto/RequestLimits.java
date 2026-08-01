@@ -7,11 +7,20 @@ public final class RequestLimits {
 	}
 
 	/**
-	 * Longest expiry any link may be given, whether at creation or via PATCH. All links must
-	 * expire within 30 days - there is no "permanent link" option any more.
+	 * Free-tier link lifetime: every free-tier link must expire within 30 days, and omitting
+	 * ttlSeconds on create defaults to exactly this. Premium callers bypass this cap entirely -
+	 * see UrlServiceImpl#computeExpiry - omitting ttlSeconds for them means no expiration at all.
 	 */
-	public static final long MAX_TTL_SECONDS = 2_592_000L;
+	public static final long FREE_MAX_TTL_SECONDS = 2_592_000L;
+	public static final long FREE_DEFAULT_TTL_SECONDS = FREE_MAX_TTL_SECONDS;
 
-	/** Expiry applied when {@code ttlSeconds} is omitted on create: exactly the 30-day maximum. */
-	public static final long DEFAULT_TTL_SECONDS = MAX_TTL_SECONDS;
+	/** Sanity ceiling for premium callers who do specify an explicit ttlSeconds (10 years). */
+	public static final long PREMIUM_MAX_TTL_SECONDS = 315_360_000L;
+
+	/**
+	 * Bean Validation's static {@code @Max} can't see the caller's resolved tier, so both DTOs are
+	 * annotated against this outer (premium) bound; the stricter free-tier cap above is enforced
+	 * afterward in UrlServiceImpl, where the tier is known.
+	 */
+	public static final long MAX_TTL_SECONDS = PREMIUM_MAX_TTL_SECONDS;
 }

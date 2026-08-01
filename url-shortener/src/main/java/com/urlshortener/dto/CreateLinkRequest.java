@@ -8,9 +8,10 @@ import jakarta.validation.constraints.Size;
 
 /**
  * Request body for {@code POST /urls}.
- * {@code alias} is optional. {@code ttlSeconds} is optional too, but omitting it does NOT mean
- * "never expires" - every link expires within 30 days, so omitting it defaults to the full
- * 30-day maximum ({@link RequestLimits#DEFAULT_TTL_SECONDS}).
+ * {@code alias} is optional. {@code ttlSeconds} is optional too, but its meaning depends on the
+ * caller's plan tier (resolved from the {@code X-Api-Key} header): free-tier callers get a
+ * mandatory 30-day cap and default; premium callers may omit it for no expiration at all, or
+ * supply an explicit value up to a generous sanity ceiling.
  */
 public record CreateLinkRequest(
 
@@ -22,7 +23,7 @@ public record CreateLinkRequest(
 		String alias,
 
 		@Positive(message = "ttlSeconds must be positive")
-		@Max(value = RequestLimits.MAX_TTL_SECONDS, message = "ttlSeconds must be at most " + RequestLimits.MAX_TTL_SECONDS + " (30 days)")
+		@Max(value = RequestLimits.MAX_TTL_SECONDS, message = "ttlSeconds must be at most " + RequestLimits.MAX_TTL_SECONDS + " seconds")
 		Long ttlSeconds
 ) {
 }

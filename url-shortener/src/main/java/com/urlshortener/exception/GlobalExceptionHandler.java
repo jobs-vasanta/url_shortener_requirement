@@ -59,6 +59,12 @@ public class GlobalExceptionHandler {
 				.body(ErrorResponse.of(400, "BAD_REQUEST", ex.getMessage()));
 	}
 
+	@ExceptionHandler(TtlExceedsPlanLimitException.class)
+	public ResponseEntity<ErrorResponse> handleTtlExceedsPlanLimit(TtlExceedsPlanLimitException ex) {
+		return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+				.body(ErrorResponse.of(400, "TTL_EXCEEDS_PLAN_LIMIT", ex.getMessage()));
+	}
+
 	@ExceptionHandler(RateLimitExceededException.class)
 	public ResponseEntity<ErrorResponse> handleRateLimit(RateLimitExceededException ex) {
 		// WARN, not DEBUG: repeated hits here are a signal of abuse/misbehaving clients worth alerting on.
