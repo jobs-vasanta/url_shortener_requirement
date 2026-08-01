@@ -4,6 +4,7 @@ import com.urlshortener.domain.ClickEvent;
 import com.urlshortener.domain.Link;
 import com.urlshortener.dto.AnalyticsResponse;
 import com.urlshortener.exception.LinkNotFoundException;
+import com.urlshortener.repository.ClickAccessWindow;
 import com.urlshortener.repository.ClickEventRepository;
 import com.urlshortener.repository.LinkRepository;
 import com.urlshortener.service.AnalyticsService;
@@ -37,13 +38,15 @@ public class AnalyticsServiceImpl implements AnalyticsService {
 
 	@Override
 	public void recordClick(Long linkId, String referrer, String userAgent, String remoteIp) {
+		Instant now = Instant.now();
 		ClickEvent event = new ClickEvent(
 				linkId,
-				Instant.now(),
+				now,
 				referrer,
 				HashUtil.sha256Hex(userAgent),
 				HashUtil.sha256Hex(remoteIp));
 		clickEventRepository.save(event);
+		linkRepository.incrementClickCount(linkId, now);
 		redisTemplate.delete(ANALYTICS_CACHE_PREFIX + linkId);
 	}
 
@@ -58,11 +61,12 @@ public class AnalyticsServiceImpl implements AnalyticsService {
 			return cached;
 		}
 
-		long totalClicks = clickEventRepository.countByLinkId(link.getId());
-		Instant firstAccessedAt = clickEventRepository.findFirstAccessedAt(link.getId());
-		Instant lastAccessedAt = clickEventRepository.findLastAccessedAt(link.getId());
+		// Denormalized counter (fast PK read) rather than COUNT(*) over click_events on every request.
+		long totalClicks = link.getClickCount();
+		ClickAccessWindow accessWindow = clickEventRepository.findAccessWindow(link.getId());
 
-		AnalyticsResponse response = new AnalyticsResponse(shortCode, totalClicks, firstAccessedAt, lastAccessedAt);
+		AnalyticsResponse response = new AnalyticsResponse(
+				shortCode, totalClicks, accessWindow.firstAccessedAt(), accessWindow.lastAccessedAt());
 		redisTemplate.opsForValue().set(cacheKey, response, ANALYTICS_CACHE_TTL.toSeconds(), TimeUnit.SECONDS);
 		return response;
 	}

@@ -5,8 +5,11 @@ CREATE TABLE links (
     short_code VARCHAR(32) NOT NULL,
     original_url VARCHAR(2048) NOT NULL,
     status VARCHAR(16) NOT NULL,
+    click_count BIGINT NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL,
-    expires_at TIMESTAMPTZ
+    updated_at TIMESTAMPTZ NOT NULL,
+    expires_at TIMESTAMPTZ,
+    version BIGINT NOT NULL DEFAULT 0
 );
 
 CREATE UNIQUE INDEX idx_links_short_code ON links (short_code);
@@ -21,5 +24,6 @@ CREATE TABLE click_events (
     ip_hash VARCHAR(64)
 );
 
-CREATE INDEX idx_click_events_link_id ON click_events (link_id);
+CREATE INDEX idx_click_events_link_id_occurred_at ON click_events (link_id, occurred_at);
 CREATE INDEX idx_click_events_occurred_at ON click_events (occurred_at);
+
