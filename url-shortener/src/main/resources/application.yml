@@ -50,6 +50,9 @@ app:
     link-ttl-seconds: ${LINK_CACHE_TTL_SECONDS:21600}
     # Short-lived: bounds staleness of the read-aggregated click counters between explicit invalidations.
     analytics-ttl-seconds: ${ANALYTICS_CACHE_TTL_SECONDS:30}
+  logging:
+    # Service-layer calls at/above this are logged at WARN by PerformanceLoggingAspect.
+    slow-call-threshold-ms: ${SLOW_CALL_THRESHOLD_MS:500}
 
 resilience4j:
   circuitbreaker:

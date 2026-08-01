@@ -1,6 +1,7 @@
 package com.urlshortener.event;
 
 import com.urlshortener.service.AnalyticsService;
+import net.logstash.logback.argument.StructuredArguments;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.event.EventListener;
@@ -30,7 +31,9 @@ public class ClickRecordedEventListener {
 			analyticsService.recordClick(event.getLinkId(), event.getReferrer(), event.getUserAgent(), event.getRemoteIp());
 		} catch (Exception ex) {
 			// TODO: push to a retry queue / outbox table instead of dropping (see Architecture.md, Section 8).
-			log.error("Failed to persist click event for linkId={}", event.getLinkId(), ex);
+			// The Throwable must be the last vararg - SLF4J only auto-extracts it for the stack trace from that position.
+			log.error("Failed to persist click event for linkId={}", event.getLinkId(),
+					StructuredArguments.kv("linkId", event.getLinkId()), ex);
 		}
 	}
 }

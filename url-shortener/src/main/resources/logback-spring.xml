@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+	<include resource="org/springframework/boot/logging/logback/defaults.xml" />
+
+	<!-- Human-readable console output for local/dev work, correlation ID included for traceability. -->
+	<springProfile name="!prod">
+		<appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+			<encoder>
+				<pattern>%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%thread] [correlationId=%X{correlationId:-none}] %logger{36} - %msg%n%wEx</pattern>
+			</encoder>
+		</appender>
+	</springProfile>
+
+	<!-- One JSON object per line in prod, so a log-shipping agent (Fluent Bit/Filebeat/etc.) can parse
+	     fields directly, without regex, and MDC (correlationId) plus any StructuredArguments used at
+	     call sites are automatically promoted to top-level fields. -->
+	<springProfile name="prod">
+		<appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+			<encoder class="net.logstash.logback.encoder.LogstashEncoder">
+				<customFields>{"service":"url-shortener"}</customFields>
+			</encoder>
+		</appender>
+	</springProfile>
+
+	<root level="INFO">
+		<appender-ref ref="CONSOLE" />
+	</root>
+</configuration>

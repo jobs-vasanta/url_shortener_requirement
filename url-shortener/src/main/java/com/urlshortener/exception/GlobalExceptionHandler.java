@@ -61,6 +61,8 @@ public class GlobalExceptionHandler {
 
 	@ExceptionHandler(RateLimitExceededException.class)
 	public ResponseEntity<ErrorResponse> handleRateLimit(RateLimitExceededException ex) {
+		// WARN, not DEBUG: repeated hits here are a signal of abuse/misbehaving clients worth alerting on.
+		log.warn("Rate limit exceeded: {}", ex.getMessage());
 		return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
 				.header("Retry-After", String.valueOf(rateLimitProperties.getPeriodSeconds()))
 				.body(ErrorResponse.of(429, "TOO_MANY_REQUESTS", ex.getMessage()));
