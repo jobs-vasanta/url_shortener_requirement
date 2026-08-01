@@ -69,6 +69,8 @@ dependencies {
 	testImplementation "org.testcontainers:junit-jupiter:${testcontainersVersion}"
 	testImplementation "org.testcontainers:postgresql:${testcontainersVersion}"
 	testImplementation 'com.redis:testcontainers-redis:1.6.4'
+	// Polls for the async click-recording pipeline to complete in integration tests, instead of a fixed Thread.sleep.
+	testImplementation 'org.awaitility:awaitility:4.2.2'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
