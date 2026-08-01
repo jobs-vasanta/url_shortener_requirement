@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -57,10 +58,12 @@ class RateLimitInterceptorTest {
 		properties.setFailOpen(true);
 		interceptor = new RateLimitInterceptor(stringRedisTemplate, properties, apiKeyService);
 
-		when(request.getRemoteAddr()).thenReturn("10.0.0.1");
+		// lenient(): tests that present an X-Api-Key never reach the getRemoteAddr() branch.
+		lenient().when(request.getRemoteAddr()).thenReturn("10.0.0.1");
 		// No X-Api-Key header by default -> resolves to FREE, preserving every existing test's
-		// prior (pre-tier-aware) behavior.
-		when(apiKeyService.resolveTier(any())).thenReturn(ApiKeyTier.FREE);
+		// prior (pre-tier-aware) behavior. lenient(): tests that stub a more specific key/tier
+		// combination shadow this default, which strict stubbing would otherwise flag as unused.
+		lenient().when(apiKeyService.resolveTier(any())).thenReturn(ApiKeyTier.FREE);
 	}
 
 	// --- Happy path -----------------------------------------------------------------------

@@ -6,7 +6,6 @@ import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.header.writers.frameoptions.XFrameOptionsHeaderWriter.XFrameOptionsMode;
 
 /**
  * Baseline security posture for the prototype:
@@ -27,7 +26,7 @@ public class SecurityConfig {
 				.csrf(AbstractHttpConfigurer::disable)
 				.headers(headers -> headers
 						.contentTypeOptions(Customizer.withDefaults())
-						.frameOptions(frame -> frame.mode(XFrameOptionsMode.DENY))
+						.frameOptions(frame -> frame.deny())
 						.httpStrictTransportSecurity(hsts -> hsts
 								.includeSubDomains(true)
 								.maxAgeInSeconds(31_536_000)))
