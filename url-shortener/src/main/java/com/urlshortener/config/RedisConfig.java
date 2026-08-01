@@ -1,5 +1,7 @@
 package com.urlshortener.config;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.jsontype.BasicPolymorphicTypeValidator;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
@@ -19,13 +21,24 @@ import org.springframework.data.redis.serializer.StringRedisSerializer;
 public class RedisConfig {
 
 	@Bean
-	public RedisTemplate<String, Object> redisTemplate(RedisConnectionFactory connectionFactory) {
+	public RedisTemplate<String, Object> redisTemplate(RedisConnectionFactory connectionFactory, ObjectMapper objectMapper) {
+		// Copy the app's ObjectMapper so modules registered by Spring Boot's auto-configuration
+		// (notably JavaTimeModule) carry over - without it, any cached type with a java.time
+		// field (e.g. Link.createdAt/expiresAt) fails to serialize on every write. Default
+		// typing is then activated on this copy only, never on the shared web-facing mapper,
+		// since GenericJackson2JsonRedisSerializer needs the embedded type info to deserialize
+		// back into the original POJO type.
+		ObjectMapper redisObjectMapper = objectMapper.copy();
+		redisObjectMapper.activateDefaultTyping(
+				BasicPolymorphicTypeValidator.builder().allowIfBaseType(Object.class).build(),
+				ObjectMapper.DefaultTyping.NON_FINAL);
+		GenericJackson2JsonRedisSerializer valueSerializer = new GenericJackson2JsonRedisSerializer(redisObjectMapper);
 		RedisTemplate<String, Object> template = new RedisTemplate<>();
 		template.setConnectionFactory(connectionFactory);
 		template.setKeySerializer(new StringRedisSerializer());
-		template.setValueSerializer(new GenericJackson2JsonRedisSerializer());
+		template.setValueSerializer(valueSerializer);
 		template.setHashKeySerializer(new StringRedisSerializer());
-		template.setHashValueSerializer(new GenericJackson2JsonRedisSerializer());
+		template.setHashValueSerializer(valueSerializer);
 		template.afterPropertiesSet();
 		return template;
 	}

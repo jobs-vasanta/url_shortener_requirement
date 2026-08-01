@@ -1,0 +1,10 @@
+# Normalize line endings to LF in the repo, regardless of the checkout
+# platform's core.autocrlf setting. Without this, Windows checkouts get CRLF
+# source files, which fails the Docker image build: Spotless (running inside
+# the Linux gradle build container) enforces LF and rejects CRLF as a format
+# violation (spotlessJavaCheck).
+* text=auto eol=lf
+
+*.jar binary
+*.png binary
+*.jpg binary

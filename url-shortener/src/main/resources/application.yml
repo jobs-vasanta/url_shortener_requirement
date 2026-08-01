@@ -4,9 +4,9 @@ spring:
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:dev}
   datasource:
-    url: ${DB_URL:jdbc:postgresql://localhost:5432/urlshortener}
-    username: ${DB_USERNAME:urlshortener}
-    password: ${DB_PASSWORD:urlshortener}
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/urlshortener-dev}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:admin}
     hikari:
       maximum-pool-size: ${DB_POOL_SIZE:10}
   jpa:

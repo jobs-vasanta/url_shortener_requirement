@@ -27,6 +27,10 @@ public class LinkExpiryScheduler {
 		this.linkRepository = linkRepository;
 	}
 
+	// @Transactional here too (in addition to sweepExpiredLinks) because the call below is a
+	// same-class self-invocation, which bypasses the @Transactional proxy on sweepExpiredLinks
+	// entirely; annotating run() ensures a transaction is active before that call happens.
+	@Transactional
 	@Scheduled(fixedDelayString = "${app.link-expiry.sweep-interval-ms}")
 	public void run() {
 		sweepExpiredLinks();
