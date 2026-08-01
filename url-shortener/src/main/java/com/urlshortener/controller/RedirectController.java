@@ -1,6 +1,7 @@
 package com.urlshortener.controller;
 
-import com.urlshortener.service.LinkService;
+import com.urlshortener.service.ClickContext;
+import com.urlshortener.service.UrlService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -16,19 +17,20 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 public class RedirectController {
 
-	private final LinkService linkService;
+	private final UrlService urlService;
 
-	public RedirectController(LinkService linkService) {
-		this.linkService = linkService;
+	public RedirectController(UrlService urlService) {
+		this.urlService = urlService;
 	}
 
 	@GetMapping("/{code}")
 	public ResponseEntity<Void> redirect(@PathVariable String code, HttpServletRequest request) {
-		String originalUrl = linkService.resolveForRedirect(
-				code,
+		ClickContext clickContext = new ClickContext(
 				request.getHeader(HttpHeaders.REFERER),
 				request.getHeader(HttpHeaders.USER_AGENT),
 				request.getRemoteAddr());
+
+		String originalUrl = urlService.resolveForRedirect(code, clickContext);
 
 		return ResponseEntity.status(HttpStatus.FOUND)
 				.header(HttpHeaders.LOCATION, originalUrl)

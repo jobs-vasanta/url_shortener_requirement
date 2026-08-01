@@ -2,7 +2,7 @@ package com.urlshortener.controller;
 
 import com.urlshortener.dto.CreateLinkRequest;
 import com.urlshortener.dto.LinkResponse;
-import com.urlshortener.service.LinkService;
+import com.urlshortener.service.UrlService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -19,26 +19,26 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/links")
 public class LinkController {
 
-	private final LinkService linkService;
+	private final UrlService urlService;
 
-	public LinkController(LinkService linkService) {
-		this.linkService = linkService;
+	public LinkController(UrlService urlService) {
+		this.urlService = urlService;
 	}
 
 	@PostMapping
 	public ResponseEntity<LinkResponse> createLink(@Valid @RequestBody CreateLinkRequest request) {
-		LinkResponse response = linkService.createLink(request);
+		LinkResponse response = urlService.createLink(request);
 		return ResponseEntity.status(HttpStatus.CREATED).body(response);
 	}
 
 	@GetMapping("/{code}")
 	public ResponseEntity<LinkResponse> getLink(@PathVariable String code) {
-		return ResponseEntity.ok(linkService.getLink(code));
+		return ResponseEntity.ok(urlService.getLink(code));
 	}
 
 	@DeleteMapping("/{code}")
 	public ResponseEntity<Void> deactivateLink(@PathVariable String code) {
-		linkService.deactivate(code);
+		urlService.deactivate(code);
 		return ResponseEntity.noContent().build();
 	}
 }

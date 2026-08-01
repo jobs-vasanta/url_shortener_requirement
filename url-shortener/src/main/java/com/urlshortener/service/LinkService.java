@@ -3,7 +3,7 @@ package com.urlshortener.service;
 import com.urlshortener.dto.CreateLinkRequest;
 import com.urlshortener.dto.LinkResponse;
 
-public interface LinkService {
+public interface UrlService {
 
 	LinkResponse createLink(CreateLinkRequest request);
 
