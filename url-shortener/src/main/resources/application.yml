@@ -42,6 +42,10 @@ app:
     period-seconds: ${RATE_LIMIT_PERIOD_SECONDS:60}
     fail-open: ${RATE_LIMIT_FAIL_OPEN:true}
   base-url: ${APP_BASE_URL:http://localhost:8080}
+  link-expiry:
+    # How often the background sweep flips ACTIVE links past expiresAt to EXPIRED. Purely
+    # cosmetic/reporting - redirects already enforce expiry in real time regardless of this.
+    sweep-interval-ms: ${LINK_EXPIRY_SWEEP_INTERVAL_MS:300000}
   snowflake:
     # Must be unique per running instance (0-1023) - see SnowflakeConfig.
     node-id: ${SNOWFLAKE_NODE_ID:0}

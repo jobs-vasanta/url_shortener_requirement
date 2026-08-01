@@ -3,8 +3,10 @@ package com.urlshortener.service.impl;
 import com.urlshortener.cache.CacheKeys;
 import com.urlshortener.cache.CacheService;
 import com.urlshortener.domain.Link;
+import com.urlshortener.domain.LinkStatus;
 import com.urlshortener.dto.CreateLinkRequest;
 import com.urlshortener.dto.LinkResponse;
+import com.urlshortener.dto.RequestLimits;
 import com.urlshortener.dto.UpdateLinkRequest;
 import com.urlshortener.event.ClickRecordedEvent;
 import com.urlshortener.exception.LinkGoneException;
@@ -157,9 +159,15 @@ public class UrlServiceImpl implements UrlService {
 		return shortCodeGeneratorService.generate();
 	}
 
-	/** Translates an optional relative TTL (seconds from now) into an absolute expiry instant, or null for none. */
+	/**
+	 * Translates an optional relative TTL (seconds from now) into an absolute expiry instant.
+	 * Every link must expire within 30 days, so omitting {@code ttlSeconds} defaults to the full
+	 * 30-day maximum rather than "never" - {@code @Max(RequestLimits.MAX_TTL_SECONDS)} on the DTO
+	 * already prevents a caller-supplied value from exceeding that same ceiling.
+	 */
 	private Instant computeExpiry(Long ttlSeconds, Instant now) {
-		return ttlSeconds != null ? now.plusSeconds(ttlSeconds) : null;
+		long effectiveTtlSeconds = ttlSeconds != null ? ttlSeconds : RequestLimits.DEFAULT_TTL_SECONDS;
+		return now.plusSeconds(effectiveTtlSeconds);
 	}
 
 	/** Cache-aside read: serve from Redis when present, otherwise load from Postgres and populate the cache. */
@@ -179,14 +187,28 @@ public class UrlServiceImpl implements UrlService {
 		cacheService.put(CacheKeys.link(link.getShortCode()), link, linkCacheTtl);
 	}
 
-	/** Maps the persistence-layer entity to the API-facing response shape. */
+	/**
+	 * Maps the persistence-layer entity to the API-facing response shape. Recomputes an
+	 * effective status rather than trusting the stored column verbatim: the scheduled sweep
+	 * (see LinkExpiryScheduler) that flips ACTIVE -> EXPIRED in the database runs periodically,
+	 * not on every request, so without this a link could still read back as "ACTIVE" here for a
+	 * short window after its expiresAt has actually passed.
+	 */
 	private LinkResponse toResponse(Link link) {
 		return new LinkResponse(
 				link.getShortCode(),
 				"/" + link.getShortCode(),
 				link.getOriginalUrl(),
-				link.getStatus().name(),
+				effectiveStatus(link).name(),
 				link.getCreatedAt(),
 				link.getExpiresAt());
+	}
+
+	/** The status this link should be reported as *right now*, independent of the sweep job's cadence. */
+	private LinkStatus effectiveStatus(Link link) {
+		if (link.getStatus() == LinkStatus.ACTIVE && link.getExpiresAt() != null && !Instant.now().isBefore(link.getExpiresAt())) {
+			return LinkStatus.EXPIRED;
+		}
+		return link.getStatus();
 	}
 }

@@ -38,7 +38,7 @@ class LinkLifecycleIntegrationTest extends AbstractIntegrationTest {
 		assertThat(created).isNotNull();
 		assertThat(created.status()).isEqualTo("ACTIVE");
 		assertThat(created.originalUrl()).isEqualTo("https://example.com/lifecycle/create-then-get");
-		assertThat(created.expiresAt()).isNull();
+		assertThat(created.expiresAt()).isNotNull();
 
 		// Round-trips through the real database, not a mock repository.
 		Link persisted = linkRepository.findByShortCode(created.shortCode()).orElseThrow();

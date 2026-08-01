@@ -57,6 +57,16 @@ class FailureScenariosIntegrationTest extends AbstractIntegrationTest {
 	}
 
 	@Test
+	void createLink_withTtlSecondsOverThirtyDays_returns400() {
+		// Every link must expire within 30 days now - a caller can no longer request a longer TTL.
+		ResponseEntity<ErrorResponse> response = restTemplate.postForEntity(
+				"/urls", new CreateLinkRequest("https://example.com/too-long-ttl", null, 2_592_001L), ErrorResponse.class);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(response.getBody().error()).isEqualTo("VALIDATION_FAILED");
+	}
+
+	@Test
 	void createLink_withAMalformedJsonBody_returns400_notA500() {
 		HttpHeaders headers = new HttpHeaders();
 		headers.setContentType(MediaType.APPLICATION_JSON);

@@ -16,6 +16,7 @@ import com.urlshortener.domain.Link;
 import com.urlshortener.domain.LinkStatus;
 import com.urlshortener.dto.CreateLinkRequest;
 import com.urlshortener.dto.LinkResponse;
+import com.urlshortener.dto.RequestLimits;
 import com.urlshortener.dto.UpdateLinkRequest;
 import com.urlshortener.event.ClickRecordedEvent;
 import com.urlshortener.exception.InvalidUrlException;
@@ -83,7 +84,7 @@ class UrlServiceImplTest {
 
 		assertThat(response.shortCode()).isEqualTo("gen123");
 		assertThat(response.originalUrl()).isEqualTo("https://example.com/page");
-		assertThat(response.expiresAt()).isNull();
+		assertThat(response.expiresAt()).isNotNull();
 		verify(urlValidationService).validate("https://example.com/page");
 		verify(linkRepository).save(any(Link.class));
 		verify(cacheService).put(eq(CacheKeys.link("gen123")), any(Link.class), any());
@@ -119,14 +120,20 @@ class UrlServiceImplTest {
 	}
 
 	@Test
-	void createLink_withoutTtlSeconds_expiresAtIsNull() {
-		// Edge case: omitting ttlSeconds must mean "never expires", not "expires immediately".
+	void createLink_withoutTtlSeconds_defaultsToThirtyDayExpiry() {
+		// Edge case: every link must expire within 30 days now - omitting ttlSeconds must default
+		// to that 30-day ceiling, not "never expires".
 		when(shortCodeGeneratorService.generate()).thenReturn("gen123");
 		CreateLinkRequest request = new CreateLinkRequest("https://example.com/page", null, null);
 
+		Instant before = Instant.now();
 		LinkResponse response = urlService.createLink(request);
+		Instant after = Instant.now();
 
-		assertThat(response.expiresAt()).isNull();
+		assertThat(response.expiresAt()).isNotNull();
+		assertThat(response.expiresAt()).isBetween(
+				before.plusSeconds(RequestLimits.DEFAULT_TTL_SECONDS),
+				after.plusSeconds(RequestLimits.DEFAULT_TTL_SECONDS));
 	}
 
 	@Test
@@ -227,6 +234,19 @@ class UrlServiceImplTest {
 		assertThat(response.shortCode()).isEqualTo("abc");
 		assertThat(response.shortUrl()).isEqualTo("/abc");
 		assertThat(response.status()).isEqualTo("ACTIVE");
+	}
+
+	@Test
+	void getLink_reportsExpiredStatus_evenBeforeTheScheduledSweepFlipsTheDbColumn() {
+		// The scheduled LinkExpiryScheduler only runs periodically, so a link whose expiresAt has
+		// passed must still read back as EXPIRED here immediately - it can't be left showing the
+		// stale, not-yet-swept "ACTIVE" status stored in the DB.
+		Link link = activeLink("abc", "https://example.com", Instant.now().minus(1, ChronoUnit.DAYS));
+		when(cacheService.get(any(), eq(Link.class))).thenReturn(Optional.of(link));
+
+		LinkResponse response = urlService.getLink("abc");
+
+		assertThat(response.status()).isEqualTo("EXPIRED");
 	}
 
 	@Test

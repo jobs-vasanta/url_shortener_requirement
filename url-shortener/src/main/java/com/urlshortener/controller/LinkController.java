@@ -43,7 +43,9 @@ public class LinkController {
 	}
 
 	@Operation(summary = "Create a short link",
-			description = "Validates the target URL, assigns a short code (or uses the supplied alias), and persists it.")
+			description = "Validates the target URL, assigns a short code (or uses the supplied alias), and persists it. "
+					+ "`ttlSeconds` is optional but capped at 30 days; omitting it defaults to the full 30-day expiry - "
+					+ "there is no option for a link that never expires.")
 	@ApiResponses({
 			@ApiResponse(responseCode = "201", description = "Link created",
 					content = @Content(schema = @Schema(implementation = LinkResponse.class))),
