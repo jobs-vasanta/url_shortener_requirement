@@ -3,6 +3,7 @@ package com.urlshortener.service.impl;
 import com.urlshortener.domain.Link;
 import com.urlshortener.dto.CreateLinkRequest;
 import com.urlshortener.dto.LinkResponse;
+import com.urlshortener.dto.UpdateLinkRequest;
 import com.urlshortener.event.ClickRecordedEvent;
 import com.urlshortener.exception.LinkGoneException;
 import com.urlshortener.exception.LinkNotFoundException;
@@ -99,6 +100,32 @@ public class UrlServiceImpl implements UrlService {
 	@Transactional(readOnly = true)
 	public LinkResponse getLink(String shortCode) {
 		return toResponse(loadLink(shortCode));
+	}
+
+	/**
+	 * Applies a partial update directly against the DB copy (not the cache), then refreshes the
+	 * cache with the new state so a subsequent redirect never serves stale pre-update data.
+	 */
+	@Override
+	@Transactional
+	public LinkResponse updateLink(String shortCode, UpdateLinkRequest request) {
+		Link link = linkRepository.findByShortCode(shortCode)
+				.orElseThrow(() -> new LinkNotFoundException(shortCode));
+
+		if (request.ttlSeconds() != null) {
+			link.updateExpiresAt(Instant.now().plusSeconds(request.ttlSeconds()));
+		}
+		if (request.active() != null) {
+			if (request.active()) {
+				link.reactivate();
+			} else {
+				link.deactivate();
+			}
+		}
+
+		linkRepository.save(link);
+		cacheLink(link);
+		return toResponse(link);
 	}
 
 	/**

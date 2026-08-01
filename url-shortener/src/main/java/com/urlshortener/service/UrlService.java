@@ -2,6 +2,7 @@ package com.urlshortener.service;
 
 import com.urlshortener.dto.CreateLinkRequest;
 import com.urlshortener.dto.LinkResponse;
+import com.urlshortener.dto.UpdateLinkRequest;
 
 /**
  * Core use cases for the URL shortener: create, redirect-resolution, lookup, and
@@ -28,6 +29,12 @@ public interface UrlService {
 
 	/** Fetches a link's public metadata (not the analytics - see AnalyticsService for that). */
 	LinkResponse getLink(String shortCode);
+
+	/**
+	 * Applies a partial update: reactivates/deactivates when {@code active} is present,
+	 * and/or replaces the expiry when {@code ttlSeconds} is present. Fields left null are unchanged.
+	 */
+	LinkResponse updateLink(String shortCode, UpdateLinkRequest request);
 
 	/** Marks a link DEACTIVATED so subsequent redirects return 410 Gone, and evicts it from cache. */
 	void deactivate(String shortCode);

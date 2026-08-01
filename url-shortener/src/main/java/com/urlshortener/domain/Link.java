@@ -87,8 +87,20 @@ public class Link {
 		this.updatedAt = Instant.now();
 	}
 
+	/** Restores a deactivated/expired link to ACTIVE; callers decide whether that's appropriate (e.g. after extending expiresAt). */
+	public void reactivate() {
+		this.status = LinkStatus.ACTIVE;
+		this.updatedAt = Instant.now();
+	}
+
 	public void markExpired() {
 		this.status = LinkStatus.EXPIRED;
+		this.updatedAt = Instant.now();
+	}
+
+	/** Replaces the expiry instant (null clears it, i.e. the link never expires). */
+	public void updateExpiresAt(Instant expiresAt) {
+		this.expiresAt = expiresAt;
 		this.updatedAt = Instant.now();
 	}
 
