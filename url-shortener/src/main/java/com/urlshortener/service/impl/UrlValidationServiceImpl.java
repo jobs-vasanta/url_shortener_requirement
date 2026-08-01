@@ -28,12 +28,18 @@ public class UrlValidationServiceImpl implements UrlValidationService {
 		if (url.length() > MAX_LENGTH) {
 			throw new InvalidUrlException("URL exceeds maximum length of " + MAX_LENGTH);
 		}
+		if (containsControlCharacter(url)) {
+			// Defense in depth against HTTP response-splitting/header injection via the redirect's Location header;
+			// java.net.URI already rejects most of these, but this doesn't rely on parser-specific behavior.
+			throw new InvalidUrlException("URL must not contain control characters");
+		}
 
 		URI uri;
 		try {
 			uri = new URI(url);
 		} catch (URISyntaxException e) {
-			throw new InvalidUrlException("URL is malformed: " + url);
+			// Message intentionally omits the raw input - never reflect unescaped client input into a response body.
+			throw new InvalidUrlException("URL is malformed");
 		}
 
 		String scheme = uri.getScheme();
@@ -51,6 +57,10 @@ public class UrlValidationServiceImpl implements UrlValidationService {
 		}
 	}
 
+	private boolean containsControlCharacter(String url) {
+		return url.chars().anyMatch(c -> c == '\r' || c == '\n' || c == 0);
+	}
+
 	private boolean isDisallowedHost(String host) {
 		try {
 			InetAddress address = InetAddress.getByName(host);
@@ -61,7 +71,8 @@ public class UrlValidationServiceImpl implements UrlValidationService {
 					|| address.isMulticastAddress();
 		} catch (UnknownHostException e) {
 			// Cannot resolve at validation time (e.g., offline test env) - fail closed on unresolved hosts.
-			throw new InvalidUrlException("URL host could not be resolved: " + host);
+			// Message intentionally omits the raw host - never reflect unescaped client input into a response body.
+			throw new InvalidUrlException("URL host could not be resolved");
 		}
 	}
 }

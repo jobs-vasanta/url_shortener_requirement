@@ -11,6 +11,8 @@ import com.urlshortener.repository.ClickEventRepository;
 import com.urlshortener.repository.LinkRepository;
 import com.urlshortener.service.AnalyticsService;
 import com.urlshortener.util.HashUtil;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.time.Instant;
 import java.time.Duration;
 import java.util.Optional;
@@ -44,12 +46,28 @@ public class AnalyticsServiceImpl implements AnalyticsService {
 		ClickEvent event = new ClickEvent(
 				linkId,
 				now,
-				referrer,
+				sanitizeReferrer(referrer),
 				HashUtil.sha256Hex(userAgent),
 				HashUtil.sha256Hex(remoteIp));
 		clickEventRepository.save(event);
 		linkRepository.incrementClickCount(linkId, now);
 		cacheService.evict(CacheKeys.analytics(linkId));
+	}
+
+	/**
+	 * Keeps only scheme+host+path of the referring page - query strings/fragments can carry session
+	 * tokens, search terms, or other sensitive data that has no analytical value here (data minimization).
+	 */
+	private String sanitizeReferrer(String referrer) {
+		if (referrer == null || referrer.isBlank()) {
+			return null;
+		}
+		try {
+			URI uri = new URI(referrer);
+			return new URI(uri.getScheme(), uri.getAuthority(), uri.getPath(), null, null).toString();
+		} catch (URISyntaxException e) {
+			return null;
+		}
 	}
 
 	@Override

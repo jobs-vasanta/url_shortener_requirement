@@ -82,6 +82,15 @@ management:
 
 server:
   port: ${SERVER_PORT:8080}
+  tomcat:
+    max-http-form-post-size: 8KB
+    max-swallow-size: 8KB
+    connection-timeout: 5s
+    threads:
+      max: ${SERVER_TOMCAT_MAX_THREADS:200}
+      min-spare: ${SERVER_TOMCAT_MIN_SPARE_THREADS:10}
+    accept-count: 100
+  max-http-request-header-size: 8KB
 
 logging:
   level:

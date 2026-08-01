@@ -1,5 +1,6 @@
 package com.urlshortener.exception;
 
+import com.urlshortener.config.RateLimitProperties;
 import com.urlshortener.dto.ErrorResponse;
 import java.util.List;
 import org.slf4j.Logger;
@@ -21,6 +22,12 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 public class GlobalExceptionHandler {
 
 	private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+	private final RateLimitProperties rateLimitProperties;
+
+	public GlobalExceptionHandler(RateLimitProperties rateLimitProperties) {
+		this.rateLimitProperties = rateLimitProperties;
+	}
 
 	@ExceptionHandler(LinkNotFoundException.class)
 	public ResponseEntity<ErrorResponse> handleNotFound(LinkNotFoundException ex) {
@@ -55,6 +62,7 @@ public class GlobalExceptionHandler {
 	@ExceptionHandler(RateLimitExceededException.class)
 	public ResponseEntity<ErrorResponse> handleRateLimit(RateLimitExceededException ex) {
 		return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+				.header("Retry-After", String.valueOf(rateLimitProperties.getPeriodSeconds()))
 				.body(ErrorResponse.of(429, "TOO_MANY_REQUESTS", ex.getMessage()));
 	}
 

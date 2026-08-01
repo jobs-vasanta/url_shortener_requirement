@@ -4,14 +4,16 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
 /**
- * Externalized rate-limit configuration for the link-creation endpoint.
+ * Externalized rate-limit configuration, enforced globally (all endpoints except
+ * {@code /actuator/**}, {@code /swagger-ui/**}, {@code /v3/api-docs/**}) by
+ * {@link com.urlshortener.ratelimit.RateLimitInterceptor}.
  * Bound from {@code app.rate-limit.*} in application.yml.
  */
 @Component
 @ConfigurationProperties(prefix = "app.rate-limit")
 public class RateLimitProperties {
 
-	/** Max create-link requests allowed per window, per client key (IP or API key). */
+	/** Max requests allowed per window, per client IP. */
 	private int limitForPeriod = 20;
 
 	/** Length of the sliding window, in seconds. */
