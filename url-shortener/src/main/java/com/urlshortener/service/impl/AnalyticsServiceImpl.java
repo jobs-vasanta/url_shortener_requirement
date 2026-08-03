@@ -18,6 +18,7 @@ import java.time.Duration;
 import java.util.Optional;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Raw click events are the source of truth; aggregates are computed on read
@@ -41,6 +42,7 @@ public class AnalyticsServiceImpl implements AnalyticsService {
 	}
 
 	@Override
+	@Transactional
 	public void recordClick(Long linkId, String referrer, String userAgent, String remoteIp) {
 		Instant now = Instant.now();
 		ClickEvent event = new ClickEvent(

@@ -27,11 +27,13 @@ public class RedisConfig {
 		// field (e.g. Link.createdAt/expiresAt) fails to serialize on every write. Default
 		// typing is then activated on this copy only, never on the shared web-facing mapper,
 		// since GenericJackson2JsonRedisSerializer needs the embedded type info to deserialize
-		// back into the original POJO type.
+		// back into the original POJO type. EVERYTHING (not NON_FINAL) is required because
+		// cached DTOs like AnalyticsResponse are records, which are implicitly final - NON_FINAL
+		// would silently omit their type wrapper on write and break deserialization on read.
 		ObjectMapper redisObjectMapper = objectMapper.copy();
 		redisObjectMapper.activateDefaultTyping(
 				BasicPolymorphicTypeValidator.builder().allowIfBaseType(Object.class).build(),
-				ObjectMapper.DefaultTyping.NON_FINAL);
+				ObjectMapper.DefaultTyping.EVERYTHING);
 		GenericJackson2JsonRedisSerializer valueSerializer = new GenericJackson2JsonRedisSerializer(redisObjectMapper);
 		RedisTemplate<String, Object> template = new RedisTemplate<>();
 		template.setConnectionFactory(connectionFactory);
