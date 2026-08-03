@@ -15,6 +15,11 @@ java {
 	}
 }
 
+// Retains parameter names in bytecode; required for @RequestParam/@PathVariable name resolution.
+tasks.withType(JavaCompile).configureEach {
+	options.compilerArgs << '-parameters'
+}
+
 configurations {
 	compileOnly {
 		extendsFrom annotationProcessor
